@@ -30,16 +30,32 @@ describe('nodePresets', () => {
 				id: 'node-n1',
 				type: 'simple',
 				name: 'Node A',
-				presets: ['node_n1_status', 'node_n1_cpu', 'node_n1_gpu', 'node_n1_disk'],
+				presets: [
+					'node_n1_status',
+					'node_n1_cpu',
+					'node_n1_memory',
+					'node_n1_gpu',
+					'node_n1_gpu_encoder',
+					'node_n1_gpu_decoder',
+					'node_n1_disk_free',
+				],
 			},
 			{
 				id: 'node-n2',
 				type: 'simple',
 				name: 'Node B',
-				presets: ['node_n2_status', 'node_n2_cpu', 'node_n2_gpu', 'node_n2_disk'],
+				presets: [
+					'node_n2_status',
+					'node_n2_cpu',
+					'node_n2_memory',
+					'node_n2_gpu',
+					'node_n2_gpu_encoder',
+					'node_n2_gpu_decoder',
+					'node_n2_disk_free',
+				],
 			},
 		])
-		expect(Object.keys(presets)).toHaveLength(8)
+		expect(Object.keys(presets)).toHaveLength(14)
 	})
 
 	it("shows the node's variables, and turns red while it's offline", () => {
@@ -48,10 +64,8 @@ describe('nodePresets', () => {
 		expect(simplePreset(presets, 'node_n1_status').style.text).toBe(
 			'$(ampp:node_n1_name)\\n$(ampp:node_n1_running_workloads)/$(ampp:node_n1_total_workloads) apps',
 		)
-		expect(simplePreset(presets, 'node_n1_cpu').style.text).toBe(
-			'CPU $(ampp:node_n1_cpu)%\\nMEM $(ampp:node_n1_memory)%',
-		)
-		expect(simplePreset(presets, 'node_n1_disk').feedbacks).toEqual([
+		expect(simplePreset(presets, 'node_n1_cpu').style.text).toBe('CPU\\n$(ampp:node_n1_cpu)%')
+		expect(simplePreset(presets, 'node_n1_disk_free').feedbacks).toEqual([
 			expect.objectContaining({ feedbackId: 'node_online', options: { node: 'n1' }, isInverted: true }),
 		])
 	})
@@ -62,7 +76,7 @@ describe('routingPresets', () => {
 		expect(routingPresets(new RouterState())).toEqual({ structure: [], presets: {} })
 	})
 
-	it('groups the destination and source buttons by fabric, after the controls', () => {
+	it("groups each fabric's source then destination buttons, before the controls", () => {
 		const state = new RouterState()
 		state.setEndpoints([
 			{
@@ -85,15 +99,18 @@ describe('routingPresets', () => {
 					: [group.name, group.presetId, group.templateValues],
 			),
 		).toEqual([
-			expect.objectContaining({ id: 'routing-controls' }),
-			['Destinations on Studio', 'routing_destination', [{ name: 'Monitor (Studio)', value: 'c1' }]],
-			['Destinations on Truck', 'routing_destination', [{ name: 'Monitor (Truck)', value: 'c2' }]],
-			['Sources on Studio', 'routing_source', [{ name: 'Cam 1 (Studio)', value: 'p1' }]],
-			['Sources on Truck', 'routing_source', [{ name: 'Cam 2 (Truck)', value: 'p2' }]],
+			['Studio: Sources', 'routing_source', [{ name: 'Cam 1 (Studio)', value: 'p1' }]],
+			['Studio: Destinations', 'routing_destination', [{ name: 'Monitor (Studio)', value: 'c1' }]],
+			['Truck: Sources', 'routing_source', [{ name: 'Cam 2 (Truck)', value: 'p2' }]],
+			['Truck: Destinations', 'routing_destination', [{ name: 'Monitor (Truck)', value: 'c2' }]],
+			expect.objectContaining({
+				id: 'routing-controls',
+				presets: ['routing_take', 'routing_clear', 'routing_disconnect'],
+			}),
 		])
 	})
 
-	it("routes from a source button to the selected destination, lit while it's routed there", () => {
+	it('selects a source for Take, showing only its name, lit while selected or routed', () => {
 		const state = new RouterState()
 		state.setEndpoints([
 			{ fabric: { id: 'f1', name: 'Studio' }, producers: [], consumers: [consumer({ id: 'c1', name: 'MV' })] },
@@ -103,11 +120,14 @@ describe('routingPresets', () => {
 		expect(source.steps[0]?.down).toEqual([
 			{
 				actionId: 'select_source',
-				options: { source: { isExpression: true, value: '$(local:source)' }, wait_for_take: false },
+				options: { source: { isExpression: true, value: '$(local:source)' }, wait_for_take: true },
 			},
 		])
 		expect(source.feedbacks.map((f) => f.feedbackId)).toEqual(['routed_to_selected', 'source_selected'])
 		expect(source.style.text).toBe('$(ampp:src_$(local:source)_name)')
+		expect(simplePreset(routingPresets(state).presets, 'routing_destination').style.text).toBe(
+			'$(ampp:dest_$(local:destination)_name)',
+		)
 	})
 })
 

@@ -12,12 +12,18 @@ import type {
 
 export interface RouterSource extends AmppProducer {
 	fabricId: string
+	/** Its name as the user knows it, and its fabric's when there are several */
 	label: string
+	/** Its name as the user knows it, without the fabric */
+	shortLabel: string
 }
 
 export interface RouterDestination extends AmppConsumer {
 	fabricId: string
+	/** Its name as the user knows it, and its fabric's when there are several */
 	label: string
+	/** Its name as the user knows it, without the fabric */
+	shortLabel: string
 }
 
 export interface RouterNode extends AmppNode {
@@ -151,11 +157,13 @@ function findEndpoint<T extends RouterSource | RouterDestination>(index: Endpoin
 /** The endpoint already known with this id, updated with the latest, or a new one */
 function reuse<T extends RouterSource | RouterDestination>(
 	known: ReadonlyMap<string, T>,
-	item: Omit<T, 'fabricId' | 'label'>,
+	item: Omit<T, 'fabricId' | 'label' | 'shortLabel'>,
 	fabricId: string,
 ): T {
 	const existing = known.get(item.id)
-	return existing ? Object.assign(existing, item, { fabricId }) : ({ ...item, fabricId, label: '' } as T)
+	return existing
+		? Object.assign(existing, item, { fabricId })
+		: ({ ...item, fabricId, label: '', shortLabel: '' } as T)
 }
 
 export class RouterState {
@@ -279,6 +287,7 @@ export class RouterState {
 				const app = this.#appOf(endpoint)
 				const name = displayName(endpoint, app, !!app && perApp.get(app.id) === 1)
 				const label = this.fabrics.length < 2 ? name : `${name} (${this.#fabricName(endpoint.fabricId)})`
+				endpoint.shortLabel = name
 				if (label !== endpoint.label) {
 					endpoint.label = label
 					listChanged = true
@@ -370,12 +379,12 @@ export class RouterState {
 		index: EndpointIndex<T>,
 		fields: ReadonlyArray<keyof T>,
 		fabricId: string,
-		item: Omit<T, 'fabricId' | 'label'>,
+		item: Omit<T, 'fabricId' | 'label' | 'shortLabel'>,
 		changed: Set<T>,
 	): UpsertResult {
 		const existing = index.byId.get(item.id)
 		if (!existing) {
-			list.push({ ...item, fabricId, label: '' } as T)
+			list.push({ ...item, fabricId, label: '', shortLabel: '' } as T)
 			this.#index = null
 			this.#relabel()
 			this.#listsChanged = true

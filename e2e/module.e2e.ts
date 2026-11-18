@@ -105,7 +105,7 @@ describe.skipIf(!config)('module against live AMPP', () => {
 			for (const destination of state().destinations) {
 				const prefix = destinationVariablePrefix(destination.id)
 				expect(variable(`${prefix}_source_id`)).toBe(destination.routedProducerId ?? '')
-				expect(variable(`${prefix}_name`)).toBe(destination.label)
+				expect(variable(`${prefix}_name`)).toBe(destination.shortLabel)
 			}
 		})
 

@@ -1,5 +1,6 @@
-import { combineRgb, type DropdownChoice } from '@companion-module/base'
+import type { DropdownChoice } from '@companion-module/base'
 import { WORKLOAD_STATES, type TallyState, type WorkloadState } from './api/types.js'
+import { BLUE, GREEN, RED, TALLY_RED, WHITE } from './colors.js'
 import type ModuleInstance from './main.js'
 import {
 	appOption,
@@ -148,7 +149,7 @@ export function UpdateFeedbacks(self: ModuleInstance): void {
 		routed: {
 			type: 'boolean',
 			name: 'Source Routed',
-			defaultStyle: { bgcolor: combineRgb(0, 204, 0), color: combineRgb(0, 0, 0) },
+			defaultStyle: { bgcolor: GREEN, color: WHITE },
 			options: [source, destination],
 			callback: (feedback) => {
 				const destination = self.state.findDestination(feedback.options.destination)
@@ -159,14 +160,14 @@ export function UpdateFeedbacks(self: ModuleInstance): void {
 		locked: {
 			type: 'boolean',
 			name: 'Destination Locked',
-			defaultStyle: { bgcolor: combineRgb(204, 0, 0), color: combineRgb(255, 255, 255) },
+			defaultStyle: { bgcolor: RED, color: WHITE },
 			options: [destination],
 			callback: (feedback) => !!self.state.findDestination(feedback.options.destination)?.locked,
 		},
 		tally: {
 			type: 'boolean',
 			name: 'Destination Tally',
-			defaultStyle: { bgcolor: combineRgb(255, 0, 0), color: combineRgb(255, 255, 255) },
+			defaultStyle: { bgcolor: TALLY_RED, color: WHITE },
 			options: [destination, levelOption],
 			callback: (feedback) =>
 				tallyMatches(
@@ -177,7 +178,7 @@ export function UpdateFeedbacks(self: ModuleInstance): void {
 		source_tally: {
 			type: 'boolean',
 			name: 'Source Tally',
-			defaultStyle: { bgcolor: combineRgb(255, 0, 0), color: combineRgb(255, 255, 255) },
+			defaultStyle: { bgcolor: TALLY_RED, color: WHITE },
 			options: [source, levelOption],
 			callback: (feedback) =>
 				tallyMatches(self.state.findSource(feedback.options.source)?.tallyState ?? null, feedback.options.level),
@@ -186,7 +187,7 @@ export function UpdateFeedbacks(self: ModuleInstance): void {
 			type: 'boolean',
 			name: 'Endpoint Enabled',
 			description: 'Whether a source or destination is enabled',
-			defaultStyle: { bgcolor: combineRgb(0, 204, 0), color: combineRgb(0, 0, 0) },
+			defaultStyle: { bgcolor: GREEN, color: WHITE },
 			options: [endpoint],
 			callback: (feedback) => !!self.state.findAnyEndpoint(feedback.options.endpoint)?.enabled,
 		},
@@ -194,7 +195,7 @@ export function UpdateFeedbacks(self: ModuleInstance): void {
 			type: 'boolean',
 			name: 'Endpoint Running',
 			description: 'Whether the AMPP app behind a source or destination is in the Running state',
-			defaultStyle: { bgcolor: combineRgb(0, 204, 0), color: combineRgb(0, 0, 0) },
+			defaultStyle: { bgcolor: GREEN, color: WHITE },
 			options: [endpoint],
 			callback: (feedback) => {
 				const endpoint = self.state.findAnyEndpoint(feedback.options.endpoint)
@@ -205,14 +206,14 @@ export function UpdateFeedbacks(self: ModuleInstance): void {
 			type: 'boolean',
 			name: 'Node Online',
 			description: 'Whether an AMPP node is online',
-			defaultStyle: { bgcolor: combineRgb(0, 204, 0), color: combineRgb(0, 0, 0) },
+			defaultStyle: { bgcolor: GREEN, color: WHITE },
 			options: [nodeOption(self.state.nodeChoices())],
 			callback: (feedback) => !!self.state.findNodeByRef(feedback.options.node)?.online,
 		},
 		destination_selected: {
 			type: 'boolean',
 			name: 'Destination Selected',
-			defaultStyle: { bgcolor: combineRgb(255, 255, 0), color: combineRgb(0, 0, 0) },
+			defaultStyle: { bgcolor: BLUE, color: WHITE },
 			options: [destination],
 			callback: (feedback) => {
 				const selected = self.selection.destination
@@ -223,7 +224,7 @@ export function UpdateFeedbacks(self: ModuleInstance): void {
 			type: 'boolean',
 			name: 'Routed To Selected Destination',
 			description: '(Disconnect) matches a selected destination with nothing routed to it',
-			defaultStyle: { bgcolor: combineRgb(255, 0, 0), color: combineRgb(0, 0, 0) },
+			defaultStyle: { bgcolor: GREEN, color: WHITE },
 			options: [sourceOrDisconnect],
 			callback: (feedback) => self.selection.isRoutedToSelected(feedback.options.source),
 		},
@@ -231,7 +232,7 @@ export function UpdateFeedbacks(self: ModuleInstance): void {
 			type: 'boolean',
 			name: 'Source Selected',
 			description: 'Whether this source is selected, waiting for Take',
-			defaultStyle: { bgcolor: combineRgb(255, 255, 0), color: combineRgb(0, 0, 0) },
+			defaultStyle: { bgcolor: BLUE, color: WHITE },
 			options: [sourceOrDisconnect],
 			callback: (feedback) => self.selection.isSourceSelected(feedback.options.source),
 		},
@@ -239,7 +240,7 @@ export function UpdateFeedbacks(self: ModuleInstance): void {
 			type: 'boolean',
 			name: 'Selected Source',
 			description: 'Whether a source is selected, waiting for Take, e.g. to light a Take button',
-			defaultStyle: { bgcolor: combineRgb(0, 255, 0), color: combineRgb(0, 0, 0) },
+			defaultStyle: { bgcolor: GREEN, color: WHITE },
 			options: [],
 			callback: () => self.selection.sourceId !== null,
 		},
@@ -247,7 +248,7 @@ export function UpdateFeedbacks(self: ModuleInstance): void {
 			type: 'boolean',
 			name: 'App State',
 			description: "Whether an app is in this state, as AMPP reports the app's own state (Ready is stopped)",
-			defaultStyle: { bgcolor: combineRgb(0, 204, 0), color: combineRgb(0, 0, 0) },
+			defaultStyle: { bgcolor: GREEN, color: WHITE },
 			options: [app, appState],
 			callback: (feedback) => self.state.findApp(feedback.options.app)?.state === feedback.options.state,
 		},
@@ -255,7 +256,7 @@ export function UpdateFeedbacks(self: ModuleInstance): void {
 			type: 'boolean',
 			name: 'Any App State',
 			description: 'Whether any app is in this state, e.g. Error for a system alarm button',
-			defaultStyle: { bgcolor: combineRgb(204, 0, 0), color: combineRgb(255, 255, 255) },
+			defaultStyle: { bgcolor: RED, color: WHITE },
 			options: [appState],
 			callback: (feedback) => self.state.apps.some((a) => a.state === feedback.options.state),
 		},
@@ -264,7 +265,7 @@ export function UpdateFeedbacks(self: ModuleInstance): void {
 			name: 'App Error',
 			description:
 				'Whether an app or one of its engines is in Error or reports an error reason, e.g. Unplaced when no node can run it',
-			defaultStyle: { bgcolor: combineRgb(204, 0, 0), color: combineRgb(255, 255, 255) },
+			defaultStyle: { bgcolor: RED, color: WHITE },
 			options: [app],
 			callback: (feedback) => {
 				const found = self.state.findApp(feedback.options.app)

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AmppConsumer } from '../../api/types.js'
+import { sourceVariableValues } from '../../variables.js'
 import { displayName, RouterState } from '../RouterState.js'
 import { consumer, node, producer, workload } from '../../api/__tests__/fixtures.js'
 
@@ -268,6 +269,13 @@ describe('RouterState with several fabrics', () => {
 			{ id: 'c2', label: 'MV 1 (Remote)' },
 			{ id: 'c1', label: 'MV 1 (Studio)' },
 		])
+	})
+
+	it('keeps a short label without the fabric, for buttons', () => {
+		const state = makeTwoFabrics()
+
+		expect(state.findSource('p2')).toMatchObject({ label: 'Wide (Remote)', shortLabel: 'Wide' })
+		expect(sourceVariableValues(state, state.sources)).toMatchObject({ src_p2_name: 'Wide', src_p1_name: 'Cam 1' })
 	})
 
 	it('leaves the fabric out of labels when there is only one', () => {

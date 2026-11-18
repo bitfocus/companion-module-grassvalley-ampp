@@ -97,7 +97,7 @@ export function UpdateVariableDefinitions(self: ModuleInstance): void {
 		apps_error_names: { name: 'Apps: names of those in error' },
 	}
 	const endpointDefinitions = (prefix: EndpointPrefix, label: string) => {
-		definitions[`${prefix}_name`] = { name: `${label}: name` }
+		definitions[`${prefix}_name`] = { name: `${label}: name (without its fabric)` }
 		definitions[`${prefix}_app`] = { name: `${label}: AMPP package` }
 		definitions[`${prefix}_state`] = { name: `${label}: app state (e.g. Running)` }
 		definitions[`${prefix}_label`] = { name: `${label}: user label (AMPP alias, if it differs from the name)` }
@@ -140,7 +140,7 @@ function endpointValues(
 	endpoint: RouterSource | RouterDestination,
 ): Partial<VariablesSchema> {
 	const values: Partial<VariablesSchema> = {}
-	values[`${prefix}_name`] = endpoint.label
+	values[`${prefix}_name`] = endpoint.shortLabel
 	values[`${prefix}_app`] = endpoint.packageName ?? ''
 	values[`${prefix}_state`] = state.workloadState(endpoint) ?? ''
 	values[`${prefix}_label`] = distinctAlias(endpoint) ?? ''

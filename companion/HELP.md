@@ -28,7 +28,7 @@ Control routing and monitor tally, apps, and nodes on [Grass Valley AMPP](https:
 
 ### Presets
 
-- **Routing**: destination and source buttons (grouped by fabric), Take, Clear, Disconnect and the selected destination
+- **Routing**: each fabric's source and destination buttons, then Take, Clear and Disconnect
 - **App status**: a summary, then a status and a hold-to-restart button for each app
 - **Node status** has a group for each AMPP node, with buttons for its status (name and running apps), CPU and memory, GPU, and free disk space. Each turns red while its node is offline.
 
