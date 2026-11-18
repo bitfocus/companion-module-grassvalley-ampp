@@ -194,16 +194,16 @@ describe('Connection', () => {
 		expect(lastStatus(handlers)).toEqual([InstanceStatus.ConnectionFailure, 'ECONNRESET'])
 	})
 
-	it('waits for new settings when the key loses access while connected', async () => {
+	it('waits for new settings when the credentials stop working while connected', async () => {
 		const handlers = makeHandlers()
 		const connection = new Connection(handlers)
 		connection.start('ampp.example.com', 'key')
 		await flush()
 
-		fakes.reportFailure(new AmppHttpError(403, null, 'Forbidden'))
+		fakes.reportFailure(new AmppAuthError('Key revoked'))
 		await vi.advanceTimersByTimeAsync(120_000)
 
-		expect(lastStatus(handlers)).toEqual([InstanceStatus.InsufficientPermissions, 'Permission denied: Forbidden'])
+		expect(lastStatus(handlers)).toEqual([InstanceStatus.AuthenticationFailure, 'Key revoked'])
 		expect(login).toHaveBeenCalledOnce()
 	})
 

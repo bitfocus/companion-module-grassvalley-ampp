@@ -69,6 +69,7 @@ export default class ModuleInstance extends InstanceBase<ModuleSchema> {
 			last_route_status: '',
 			last_route_error: '',
 			...selectionVariableValues(this.state, this.selection),
+			...appSummaryValues(this.state),
 		})
 
 		this.#startConnection()
@@ -155,7 +156,8 @@ export default class ModuleInstance extends InstanceBase<ModuleSchema> {
 	}
 
 	#clearState(): void {
-		if (this.state.sources.length || this.state.destinations.length || this.state.nodes.length) {
+		const state = this.state
+		if (state.sources.length || state.destinations.length || state.nodes.length || state.workloads.size) {
 			this.state.clear()
 			this.publishChanges()
 		}

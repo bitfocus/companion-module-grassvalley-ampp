@@ -100,9 +100,9 @@ export class AmppClient {
 	#pendingToken: Promise<CachedToken> | null = null
 
 	/**
-	 * `onFailure` hears about every request that fails for a reason beyond that request (rejected credentials, missing
-	 * permission, or the platform unreachable), before the error is thrown to the caller. Aborted requests aren't
-	 * reported.
+	 * `onFailure` hears about every request that fails in a way that affects the whole connection (rejected
+	 * credentials, or the platform unreachable), before the error is thrown to the caller. A refused request,
+	 * including one the key lacks permission for, only fails that request. Aborted requests aren't reported.
 	 */
 	constructor(baseUrl: string, apiKey: string, onFailure: (e: unknown) => void) {
 		this.#baseUrl = baseUrl
@@ -220,7 +220,8 @@ export class AmppClient {
 			return (text ? JSON.parse(text) : undefined) as T
 		} catch (e) {
 			if (signal.aborted) throw signal.reason
-			if (classifyFailure(e) !== 'request') this.#onFailure(e)
+			const kind = classifyFailure(e)
+			if (kind === 'auth' || kind === 'connection') this.#onFailure(e)
 			throw e
 		}
 	}

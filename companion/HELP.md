@@ -26,12 +26,6 @@ Control routing and monitor tally, apps, and nodes on [Grass Valley AMPP](https:
 - **Destination Selected** / **Source Selected** / **Selected Source** / **Routed To Selected Destination**
 - **App State** / **Any App State** / **App Error**
 
-### Presets
-
-- **Routing**: each fabric's source and destination buttons, then Take, Clear and Disconnect
-- **App status**: a summary, then a status and a hold-to-restart button for each app
-- **Node status** has a group for each AMPP node, with buttons for its status (name and running apps), CPU and memory, GPU, and free disk space. Each turns red while its node is offline.
-
 ### Variables
 
 Each source and destination has variables named by its AMPP id, e.g. `dest_<id>_source` (the routed source's name) and `dest_<id>_source_id` (its id). Others include the lock state, fabric, AMPP package and app state, each source's video format, and each node's online state and performance metrics.

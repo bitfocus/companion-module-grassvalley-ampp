@@ -257,7 +257,16 @@ describe('AmppClient', () => {
 		expect(JSON.parse(init?.body as string)).toEqual({ alias: 'Wide' })
 	})
 
-	it('reports a failure beyond the request before throwing it, but not a refused request', async () => {
+	it('reports a failure affecting the connection before throwing it, but not a refused or forbidden request', async () => {
+		const forbidden = vi.fn()
+		fetchMock
+			.mockResolvedValueOnce(tokenResponse(makeJwt(nowSeconds() + 3600)))
+			.mockResolvedValueOnce(jsonResponse(403, { message: 'Not allowed to control apps' }))
+		await expect(new AmppClient(BASE, 'KEY', forbidden).post('/control', undefined, SIGNAL)).rejects.toBeInstanceOf(
+			AmppHttpError,
+		)
+		expect(forbidden).not.toHaveBeenCalled()
+
 		const onFailure = vi.fn()
 		const client = new AmppClient(BASE, 'KEY', onFailure)
 		fetchMock
