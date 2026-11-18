@@ -1,27 +1,30 @@
-import { Regex, type SomeCompanionConfigField } from '@companion-module/base'
+import type { SomeCompanionConfigField } from '@companion-module/base'
 
 export type ModuleConfig = {
-	host: string
-	port: number
+	platformUrl: string
+}
+
+export type ModuleSecrets = {
+	apiKey: string
 }
 
 export function GetConfigFields(): SomeCompanionConfigField[] {
 	return [
 		{
 			type: 'textinput',
-			id: 'host',
-			label: 'Target IP',
+			id: 'platformUrl',
+			label: 'Platform URL',
+			description: 'For example https://<region>.gvampp.com',
 			width: 8,
-			regex: Regex.IP,
+			default: '',
 		},
 		{
-			type: 'number',
-			id: 'port',
-			label: 'Target Port',
-			width: 4,
-			min: 1,
-			max: 65535,
-			default: 8000,
+			type: 'secret-text',
+			id: 'apiKey',
+			label: 'API Key',
+			width: 8,
+			default: '',
+			description: 'An AMPP Control API Key. See the connection help for instructions.',
 		},
 	]
 }

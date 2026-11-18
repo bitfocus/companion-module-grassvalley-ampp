@@ -1,14 +1,33 @@
-import { InstanceBase, InstanceStatus, type SomeCompanionConfigField } from '@companion-module/base'
-import { GetConfigFields, type ModuleConfig } from './config.js'
-import { UpdateVariableDefinitions, type VariablesSchema } from './variables.js'
+import { InstanceBase, type SomeCompanionConfigField } from '@companion-module/base'
+import { Connection, type Session } from './api/Connection.js'
+import type { AppCommand } from './api/ControlApi.js'
+import type { PlatformNotification } from './api/Notifications.js'
+import * as commands from './commands.js'
+import { Selection } from './commands.js'
+import { applyClusterEvents } from './state/clusterEvents.js'
+import { applyLoadedState, loadState } from './state/loadState.js'
+import { applyMatrixEvents } from './state/matrixEvents.js'
+import { RouterState, type StateChanges } from './state/RouterState.js'
+import { oncePerTurn } from './util/oncePerTurn.js'
+import { GetConfigFields, type ModuleConfig, type ModuleSecrets } from './config.js'
+import {
+	destinationVariableValues,
+	appSummaryValues,
+	appVariableValues,
+	nodeVariableValues,
+	selectionVariableValues,
+	sourceVariableValues,
+	UpdateVariableDefinitions,
+	type VariablesSchema,
+} from './variables.js'
 import { UpgradeScripts } from './upgrades.js'
 import { UpdateActions, type ActionsSchema } from './actions.js'
-import { UpdateFeedbacks, type FeedbacksSchema } from './feedbacks.js'
+import { APP_FEEDBACKS, SELECTION_FEEDBACKS, UpdateFeedbacks, type FeedbacksSchema } from './feedbacks.js'
 import { UpdatePresets } from './presets.js'
 
 export type ModuleSchema = {
 	config: ModuleConfig
-	secrets: undefined
+	secrets: ModuleSecrets
 	actions: ActionsSchema
 	feedbacks: FeedbacksSchema
 	variables: VariablesSchema
@@ -17,32 +36,56 @@ export type ModuleSchema = {
 export { UpgradeScripts }
 
 export default class ModuleInstance extends InstanceBase<ModuleSchema> {
-	config!: ModuleConfig // Setup in init()
+	config!: ModuleConfig
+	secrets!: ModuleSecrets
+	readonly state = new RouterState()
+	readonly selection = new Selection(this.state)
+	#warnedNoFabrics = false
+	// Notifications are applied as they arrive, then published together once the burst they arrived in is done
+	readonly #publishSoon = oncePerTurn(() => this.publishChanges())
+
+	readonly #connection = new Connection({
+		log: (level, message) => this.log(level, message),
+		updateStatus: (status, message) => this.updateStatus(status, message),
+		load: async (session) => this.#load(session),
+		fabricsChanged: (fabrics) => this.state.fabricsDiffer(fabrics),
+		onNotifications: (notifications, session) => this.#handleNotifications(notifications, session),
+	})
 
 	constructor(internal: unknown) {
 		super(internal)
 	}
 
-	async init(config: ModuleConfig): Promise<void> {
+	async init(config: ModuleConfig, _isFirstInit: boolean, secrets: ModuleSecrets): Promise<void> {
 		this.config = config
+		this.secrets = secrets
 
-		this.updateStatus(InstanceStatus.Ok)
+		this.updateActions()
+		this.updateFeedbacks()
+		this.updatePresets()
+		this.updateVariableDefinitions()
+		this.setVariableValues({
+			last_route: '',
+			last_route_status: '',
+			last_route_error: '',
+			...selectionVariableValues(this.state, this.selection),
+			...appSummaryValues(this.state),
+		})
 
-		this.updateActions() // export actions
-		this.updateFeedbacks() // export feedbacks
-		this.updatePresets() // export Presets
-		this.updateVariableDefinitions() // export variable definitions
+		this.#startConnection()
 	}
-	// When module gets deleted
+
 	async destroy(): Promise<void> {
-		this.log('debug', 'destroy')
+		this.#publishSoon.cancel()
+		await this.#connection.stop()
 	}
 
-	async configUpdated(config: ModuleConfig): Promise<void> {
+	async configUpdated(config: ModuleConfig, secrets: ModuleSecrets): Promise<void> {
 		this.config = config
+		this.secrets = secrets
+		this.#startConnection()
 	}
 
-	// Return config fields for web config
 	getConfigFields(): SomeCompanionConfigField[] {
 		return GetConfigFields()
 	}
@@ -61,5 +104,143 @@ export default class ModuleInstance extends InstanceBase<ModuleSchema> {
 
 	updateVariableDefinitions(): void {
 		UpdateVariableDefinitions(this)
+	}
+
+	async route(sourceRef: string, destinationRef: string): Promise<void> {
+		return commands.route(this, this.#connection.requireSession(), sourceRef, destinationRef)
+	}
+
+	async setLocked(destinationRef: string, locked: boolean): Promise<void> {
+		return commands.setLocked(this, this.#connection.requireSession(), destinationRef, locked)
+	}
+
+	async rename(kind: 'source' | 'destination', ref: string, label: string): Promise<void> {
+		return commands.rename(this, this.#connection.requireSession(), kind, ref, label)
+	}
+
+	selectDestination(destinationRef: string): void {
+		commands.selectDestination(this, destinationRef)
+	}
+
+	async selectSource(sourceRef: string, waitForTake: boolean): Promise<void> {
+		return commands.selectSource(this, this.#connection.requireSession(), sourceRef, waitForTake)
+	}
+
+	async take(): Promise<void> {
+		return commands.take(this, this.#connection.requireSession())
+	}
+
+	async controlApp(command: AppCommand, appRef: string): Promise<void> {
+		return commands.controlApp(this, this.#connection.requireSession(), command, appRef)
+	}
+
+	clearSelectedSource(): void {
+		commands.clearSelectedSource(this)
+	}
+
+	/** Push the selected destination and selected source out to variables and feedbacks */
+	selectionChanged(): void {
+		this.setVariableValues(selectionVariableValues(this.state, this.selection))
+		this.checkFeedbacks(...SELECTION_FEEDBACKS)
+	}
+
+	/** Push what changed in the state out to variables and feedbacks */
+	publishChanges(): void {
+		this.#publish(this.state.takeChanges())
+	}
+
+	#startConnection(): void {
+		this.#warnedNoFabrics = false
+		this.#clearState()
+		this.#connection.start(this.config.platformUrl ?? '', this.secrets?.apiKey ?? '')
+	}
+
+	#clearState(): void {
+		const state = this.state
+		if (state.sources.length || state.destinations.length || state.nodes.length || state.workloads.size) {
+			this.state.clear()
+			this.publishChanges()
+		}
+	}
+
+	async #load(session: Session): Promise<void> {
+		const loaded = await loadState(session.apis, (message) => this.log('warn', message))
+		if (session.signal.aborted) return
+
+		applyLoadedState(this.state, loaded)
+		const changes = this.state.takeChanges()
+		if (changes.lists) {
+			this.log(
+				'info',
+				`Loaded ${this.state.sources.length} source(s) and ${this.state.destinations.length} destination(s) from ${this.state.fabrics.length} fabric(s), and ${this.state.nodes.length} node(s)`,
+			)
+		}
+		// Once until fabrics appear, rather than on every reload
+		if (this.state.fabrics.length) {
+			this.#warnedNoFabrics = false
+		} else if (!this.#warnedNoFabrics) {
+			this.#warnedNoFabrics = true
+			this.log('warn', 'This AMPP account has no fabrics, so there is nothing to route')
+		}
+		this.#publish(changes)
+	}
+
+	#publish(changes: StateChanges): void {
+		if (changes.all || changes.lists) {
+			this.selection.prune()
+			this.#stateUpdated(changes.lists)
+			return
+		}
+		if (changes.destinations.length) {
+			this.setVariableValues(destinationVariableValues(this.state, changes.destinations))
+			this.checkFeedbacks('routed', 'locked', 'tally', 'endpoint_enabled', 'endpoint_running')
+			const selected = this.selection.destination
+			if (selected && changes.destinations.includes(selected)) {
+				this.setVariableValues(selectionVariableValues(this.state, this.selection))
+				this.checkFeedbacks('routed_to_selected')
+			}
+		}
+		if (changes.sources.length) {
+			this.setVariableValues(sourceVariableValues(this.state, changes.sources))
+			this.checkFeedbacks('source_tally', 'endpoint_enabled', 'endpoint_running')
+		}
+		if (changes.apps.length) {
+			this.setVariableValues({
+				...appVariableValues(this.state, changes.apps),
+				...appSummaryValues(this.state),
+			})
+			this.checkFeedbacks(...APP_FEEDBACKS)
+		}
+		const nodes = new Set([...changes.nodes, ...changes.nodeMetrics])
+		if (nodes.size) this.setVariableValues(nodeVariableValues([...nodes]))
+		if (changes.nodes.length) this.checkFeedbacks('node_online')
+	}
+
+	/** Push everything out; definitions only need regenerating when the endpoints, nodes or their labels changed */
+	#stateUpdated(listsChanged: boolean): void {
+		// Variables first: a router reading the new action choices expects each port's fabric and label to be set
+		if (listsChanged) this.updateVariableDefinitions()
+		this.setVariableValues({
+			...destinationVariableValues(this.state, this.state.destinations),
+			...sourceVariableValues(this.state, this.state.sources),
+			...nodeVariableValues(this.state.nodes),
+			...selectionVariableValues(this.state, this.selection),
+			...appVariableValues(this.state, this.state.apps),
+			...appSummaryValues(this.state),
+		})
+		if (listsChanged) {
+			this.updateActions()
+			this.updateFeedbacks()
+			// Presets reference the feedbacks, so they go after them
+			this.updatePresets()
+		}
+		this.checkAllFeedbacks()
+	}
+
+	#handleNotifications(notifications: readonly PlatformNotification[], session: Session): void {
+		const reload = applyMatrixEvents(this.state, notifications)
+		applyClusterEvents(this.state, notifications)
+		if (reload) void session.reload()
+		this.#publishSoon.schedule()
 	}
 }
