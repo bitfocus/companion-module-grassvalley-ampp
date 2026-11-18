@@ -30,7 +30,7 @@ describe('ClusterStateApi', () => {
 		expect(get).toHaveBeenCalledWith('/cluster/state/api/v1/nodes', null, expect.any(AbortSignal))
 	})
 
-	it('lists workloads with their current state', async () => {
+	it('lists workloads with their state, desired state, node and any error', async () => {
 		const get = vi.fn<GetFn>().mockResolvedValue({
 			workloads: [
 				{
@@ -39,18 +39,53 @@ describe('ClusterStateApi', () => {
 						name: 'signal-gen-01 - Live Engine',
 						alias: null,
 						parentId: 'a1',
-						state: { state: 'Running' },
+						packageName: 'GV.AMPP.Engines.TSG',
+						desiredState: { state: 'Running' },
+						state: { state: 'Running', nodeName: 'mesh-1', errorReason: null, errorReasonCode: null },
+						states: [{ state: 'Running', nodeName: 'mesh-1', errorReason: null, errorReasonCode: null }],
 					},
 				},
-				{ workload: { id: 'a1', name: 'signal-gen-01', alias: 'Bars', parentId: null, state: null } },
+				{
+					// As AMPP reports an app no node could run
+					workload: {
+						id: 'a1',
+						name: 'signal-gen-01',
+						alias: 'Bars',
+						parentId: null,
+						packageName: 'GV.AMPP.Apps.TestSignalGenerator',
+						desiredState: { state: 'Running' },
+						state: null,
+						states: [{ state: null, nodeName: null, errorReason: null, errorReasonCode: 'Unplaced' }],
+					},
+				},
 				{ workload: null },
 				null,
 			],
 		})
 
 		await expect(makeApi(get).listWorkloads()).resolves.toEqual([
-			{ id: 'w1', name: 'signal-gen-01 - Live Engine', alias: null, parentId: 'a1', state: 'Running' },
-			{ id: 'a1', name: 'signal-gen-01', alias: 'Bars', parentId: null, state: null },
+			{
+				id: 'w1',
+				name: 'signal-gen-01 - Live Engine',
+				alias: null,
+				parentId: 'a1',
+				state: 'Running',
+				desiredState: 'Running',
+				error: null,
+				nodeName: 'mesh-1',
+				packageName: 'GV.AMPP.Engines.TSG',
+			},
+			{
+				id: 'a1',
+				name: 'signal-gen-01',
+				alias: 'Bars',
+				parentId: null,
+				state: null,
+				desiredState: 'Running',
+				error: 'Unplaced',
+				nodeName: null,
+				packageName: 'GV.AMPP.Apps.TestSignalGenerator',
+			},
 		])
 		expect(get).toHaveBeenCalledWith('/cluster/state/api/v1/workloads', null, expect.any(AbortSignal))
 	})

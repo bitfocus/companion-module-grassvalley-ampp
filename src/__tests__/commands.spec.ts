@@ -1,9 +1,21 @@
 import { describe, expect, it, vi } from 'vitest'
-import { consumer, producer } from '../api/__tests__/fixtures.js'
+import { consumer, producer, workload } from '../api/__tests__/fixtures.js'
 import type { Apis, Session } from '../api/Connection.js'
+import type { ControlApi } from '../api/ControlApi.js'
 import type { MatrixApi } from '../api/MatrixApi.js'
 import type { RouteRequest, RouteStatusValue } from '../api/types.js'
-import { rename, route, setLocked, type CommandContext } from '../commands.js'
+import {
+	clearSelectedSource,
+	controlApp,
+	rename,
+	route,
+	selectDestination,
+	Selection,
+	selectSource,
+	setLocked,
+	take,
+	type CommandContext,
+} from '../commands.js'
 import { DISCONNECT_SOURCE } from '../options.js'
 import { RouterState, type StateChanges } from '../state/RouterState.js'
 
@@ -12,8 +24,8 @@ function loadEndpoints(state: RouterState): void {
 	state.setEndpoints([
 		{
 			fabric: { id: 'f1', name: 'Studio' },
-			producers: [producer({ id: 'cam1', name: 'Cam 1' })],
-			consumers: [consumer({ id: 'mon', name: 'Monitor', locked: true })],
+			producers: [producer({ id: 'cam1', name: 'Cam 1' }), producer({ id: 'cam3', name: 'Cam 3' })],
+			consumers: [consumer({ id: 'mon', name: 'Monitor', locked: true }), consumer({ id: 'rec', name: 'Recorder' })],
 		},
 		{
 			fabric: { id: 'f2', name: 'Gallery' },
@@ -34,14 +46,18 @@ function makeState(): RouterState {
 function makeContext(state: RouterState) {
 	const variables: Record<string, unknown> = {}
 	const published: StateChanges[] = []
+	const selection = new Selection(state)
+	const selectionChanged = vi.fn()
 	const ctx = {
 		state,
+		selection,
 		log: vi.fn(),
 		setVariableValues: vi.fn((values: Record<string, unknown>) => Object.assign(variables, values)),
 		getVariableValue: (id: string) => variables[id],
 		publishChanges: () => published.push(state.takeChanges()),
+		selectionChanged,
 	}
-	return { typed: ctx as unknown as CommandContext, variables, published }
+	return { typed: ctx as unknown as CommandContext, variables, published, selection, selectionChanged }
 }
 
 function makeSession(matrix: Partial<MatrixApi>, signal = new AbortController().signal): Session {
@@ -67,7 +83,7 @@ describe('route', () => {
 		const { typed } = makeContext(makeState())
 
 		await expect(route(typed, makeSession({ requestRoute }), 'cam2', 'mon')).rejects.toThrow(
-			'Gallery / Cam 2 and Studio / Monitor are on different fabrics',
+			'Cam 2 (Gallery) and Monitor (Studio) are on different fabrics',
 		)
 		expect(requestRoute).not.toHaveBeenCalled()
 	})
@@ -83,7 +99,7 @@ describe('route', () => {
 		expect(state.findDestination('mon')?.routedProducerId).toBe('cam1')
 		expect(published).toEqual([expect.objectContaining({ destinations: [state.findDestination('mon')] })])
 		expect(variables).toEqual({
-			last_route: 'Studio / Cam 1 → Studio / Monitor',
+			last_route: 'Cam 1 (Studio) → Monitor (Studio)',
 			last_route_status: 'Routed',
 			last_route_error: '',
 		})
@@ -117,7 +133,7 @@ describe('route', () => {
 		controller.abort(new Error('The connection to AMPP ended'))
 
 		await expect(routing).rejects.toThrow(
-			'Could not check the status of route Studio / Cam 1 → Studio / Monitor: The connection to AMPP ended',
+			'Could not check the status of route Cam 1 (Studio) → Monitor (Studio): The connection to AMPP ended',
 		)
 		expect(getRouteStatus).not.toHaveBeenCalled()
 		expect(published).toEqual([])
@@ -130,7 +146,7 @@ describe('route', () => {
 		await route(typed, makeSession({ clearRoute }), DISCONNECT_SOURCE, 'mon')
 
 		expect(clearRoute).toHaveBeenCalledWith('mon')
-		expect(variables.last_route).toBe('Disconnect Studio / Monitor')
+		expect(variables.last_route).toBe('Disconnect Monitor (Studio)')
 	})
 
 	it('reports a refused request', async () => {
@@ -147,7 +163,7 @@ describe('route', () => {
 
 		await expect(
 			route(typed, makeSession({ requestRoute: accepted('Errored', 'No bandwidth') }), 'cam1', 'mon'),
-		).rejects.toThrow('Route Studio / Cam 1 → Studio / Monitor failed: No bandwidth')
+		).rejects.toThrow('Route Cam 1 (Studio) → Monitor (Studio) failed: No bandwidth')
 		expect(state.findDestination('mon')?.routedProducerId).toBeNull()
 		expect(published).toEqual([])
 	})
@@ -192,5 +208,186 @@ describe('rename', () => {
 		await rename(typed, makeSession({ setAlias }), 'source', 'cam1', ' Wide ')
 
 		expect(setAlias).toHaveBeenCalledWith('producer', 'cam1', 'Wide')
+	})
+})
+
+describe('selecting a destination, then a source', () => {
+	it('needs a destination before a source', async () => {
+		const requestRoute = vi.fn()
+		const { typed } = makeContext(makeState())
+
+		await expect(selectSource(typed, makeSession({ requestRoute }), 'cam1', false)).rejects.toThrow(
+			'Select a destination first',
+		)
+		expect(requestRoute).not.toHaveBeenCalled()
+	})
+
+	it('selects a destination by id, name or alias, once', () => {
+		const state = makeState()
+		const { typed, selection, selectionChanged } = makeContext(state)
+
+		selectDestination(typed, 'Monitor')
+		selectDestination(typed, 'mon')
+
+		expect(selection.destination).toBe(state.findDestination('mon'))
+		expect(selectionChanged).toHaveBeenCalledOnce()
+		expect(() => selectDestination(typed, 'nope')).toThrow('Unknown destination: nope')
+	})
+
+	it('routes a source to the selected destination straight away', async () => {
+		const requestRoute = accepted('Routed')
+		const { typed, selection } = makeContext(makeState())
+		selectDestination(typed, 'mon')
+
+		await selectSource(typed, makeSession({ requestRoute }), 'Cam 1', false)
+
+		expect(requestRoute).toHaveBeenCalledWith('cam1', 'mon')
+		expect(selection.sourceId).toBeNull()
+	})
+
+	it('selects a source to route on Take', async () => {
+		const state = makeState()
+		const requestRoute = accepted('Routed')
+		const session = makeSession({ requestRoute })
+		const { typed, selection } = makeContext(state)
+		selectDestination(typed, 'mon')
+
+		await selectSource(typed, session, 'Cam 3', true)
+		expect(requestRoute).not.toHaveBeenCalled()
+		expect(selection.source).toBe(state.findSource('cam3'))
+		expect(selection.isSourceSelected('cam3')).toBe(true)
+
+		await take(typed, session)
+		expect(requestRoute).toHaveBeenCalledWith('cam3', 'mon')
+		expect(selection.sourceId).toBeNull()
+	})
+
+	it('keeps the source selected when Take fails, so it can be pressed again', async () => {
+		const session = makeSession({ requestRoute: vi.fn().mockRejectedValue(new Error('The destination is locked')) })
+		const { typed, selection } = makeContext(makeState())
+		selectDestination(typed, 'mon')
+		await selectSource(typed, session, 'cam3', true)
+
+		await expect(take(typed, session)).rejects.toThrow('The destination is locked')
+		expect(selection.sourceId).toBe('cam3')
+	})
+
+	it('drops a selected source when another button routes straight away', async () => {
+		const requestRoute = accepted('Routed')
+		const session = makeSession({ requestRoute })
+		const { typed, selection } = makeContext(makeState())
+		selectDestination(typed, 'mon')
+		await selectSource(typed, session, 'cam3', true)
+
+		await selectSource(typed, session, 'cam1', false)
+
+		expect(requestRoute).toHaveBeenCalledWith('cam1', 'mon')
+		expect(selection.sourceId).toBeNull()
+	})
+
+	it('has nothing to take without a selected source', async () => {
+		const { typed } = makeContext(makeState())
+		selectDestination(typed, 'mon')
+
+		await expect(take(typed, makeSession({}))).rejects.toThrow('Nothing to take')
+	})
+
+	it('drops the selected source when another destination is selected, or when cleared', async () => {
+		const session = makeSession({})
+		const { typed, selection } = makeContext(makeState())
+		selectDestination(typed, 'mon')
+		await selectSource(typed, session, 'cam3', true)
+
+		selectDestination(typed, 'rec')
+		expect(selection.sourceId).toBeNull()
+
+		await selectSource(typed, session, 'cam1', true)
+		clearSelectedSource(typed)
+		expect(selection.sourceId).toBeNull()
+	})
+
+	it('selects and shows a disconnect', async () => {
+		const clearRoute = accepted('Cleared')
+		const session = makeSession({ clearRoute })
+		const { typed, selection } = makeContext(makeState())
+		selectDestination(typed, 'rec')
+
+		expect(selection.isRoutedToSelected(DISCONNECT_SOURCE)).toBe(true)
+		await selectSource(typed, session, DISCONNECT_SOURCE, true)
+		expect(selection.isSourceSelected(DISCONNECT_SOURCE)).toBe(true)
+		expect(selection.source).toBeUndefined()
+
+		await take(typed, session)
+		expect(clearRoute).toHaveBeenCalledWith('rec')
+	})
+
+	it('shows which source is routed to the selected destination, by id or name', () => {
+		const state = makeState()
+		state.setRoute('mon', 'cam1')
+		const { typed, selection } = makeContext(state)
+		expect(selection.isRoutedToSelected('cam1')).toBe(false)
+
+		selectDestination(typed, 'mon')
+		expect(selection.isRoutedToSelected('cam1')).toBe(true)
+		expect(selection.isRoutedToSelected('Cam 1')).toBe(true)
+		expect(selection.isRoutedToSelected('cam3')).toBe(false)
+		expect(selection.isRoutedToSelected(DISCONNECT_SOURCE)).toBe(false)
+	})
+
+	it('forgets a selected destination or source that has gone', async () => {
+		const state = makeState()
+		const { typed, selection } = makeContext(state)
+		selectDestination(typed, 'mon')
+		await selectSource(typed, makeSession({}), 'cam3', true)
+
+		state.removeProducer('cam3')
+		expect(selection.prune()).toBe(true)
+		expect(selection.sourceId).toBeNull()
+		expect(selection.destination?.id).toBe('mon')
+
+		state.removeConsumer('mon')
+		expect(selection.prune()).toBe(true)
+		expect(selection.destination).toBeUndefined()
+		expect(selection.prune()).toBe(false)
+	})
+})
+
+describe('controlApp', () => {
+	function withApp() {
+		const state = makeState()
+		state.setWorkloads([workload({ id: 'a1', name: 'signal-gen-02', alias: 'Bars' })])
+		state.takeChanges()
+		return state
+	}
+	const sessionWith = (command: ControlApi['command']): Session => ({
+		...makeSession({}),
+		apis: { matrix: {}, cluster: {}, control: { command } } as unknown as Apis,
+	})
+
+	it('asks AMPP to restart an app found by id, name or alias', async () => {
+		const command = vi.fn(async () => 'cmd1')
+		const { typed } = makeContext(withApp())
+
+		await controlApp(typed, sessionWith(command), 'restart', 'Bars')
+
+		expect(command).toHaveBeenCalledWith('restart', 'a1')
+		expect(typed.log).toHaveBeenCalledWith('info', 'Asked AMPP to restart Bars (a1)')
+	})
+
+	it('refuses an unknown app without asking AMPP', async () => {
+		const command = vi.fn(async () => 'cmd1')
+		const { typed } = makeContext(withApp())
+
+		await expect(controlApp(typed, sessionWith(command), 'stop', 'nope')).rejects.toThrow('Unknown app: nope')
+		expect(command).not.toHaveBeenCalled()
+	})
+
+	it('reports a refused command', async () => {
+		const command = vi.fn(async () => Promise.reject(new Error('Forbidden')))
+		const { typed } = makeContext(withApp())
+
+		await expect(controlApp(typed, sessionWith(command), 'start', 'a1')).rejects.toThrow(
+			'Could not start Bars: Forbidden',
+		)
 	})
 })

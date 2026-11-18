@@ -48,6 +48,13 @@ export interface StateChanges {
 	nodes: RouterNode[]
 	/** Nodes whose metrics changed */
 	nodeMetrics: RouterNode[]
+	/** Apps whose state or error changed, including through one of their engines */
+	apps: AmppWorkload[]
+}
+
+/** An app's name as the user knows it: its alias, if it has one of its own */
+export function appName(app: AmppWorkload): string {
+	return distinctAlias(app) ?? app.name
 }
 
 const ENDPOINT_FIELDS = [
@@ -114,7 +121,7 @@ function byLabel(a: { label: string }, b: { label: string }): number {
 	return a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' })
 }
 
-/** Endpoints by id, name and alias; for a shared name or alias, the first in the (sorted) list */
+/** Endpoints by id, name and alias; for a shared name or alias, the first in the (grouped and sorted) list */
 interface EndpointIndex<T extends RouterSource | RouterDestination> {
 	byId: Map<string, T>
 	byName: Map<string, T>
@@ -168,13 +175,14 @@ export class RouterState {
 	readonly #changedSources = new Set<RouterSource>()
 	readonly #changedNodes = new Set<RouterNode>()
 	readonly #changedNodeMetrics = new Set<RouterNode>()
+	readonly #changedAppIds = new Set<string>()
 
-	/** Every source, sorted by label */
+	/** Every source, grouped by fabric and sorted by label */
 	get sources(): readonly RouterSource[] {
 		return this.#sources
 	}
 
-	/** Every destination, sorted by label */
+	/** Every destination, grouped by fabric and sorted by label */
 	get destinations(): readonly RouterDestination[] {
 		return this.#destinations
 	}
@@ -196,6 +204,10 @@ export class RouterState {
 			sources: [...this.#changedSources].filter((s) => this.#lookup().sources.byId.get(s.id) === s),
 			nodes: [...this.#changedNodes],
 			nodeMetrics: [...this.#changedNodeMetrics],
+			apps: [...this.#changedAppIds].flatMap((id) => {
+				const app = this.workloads.get(id)
+				return app && !app.parentId ? [app] : []
+			}),
 		}
 		this.#listsChanged = false
 		this.#keyBeforeLoad = null
@@ -203,6 +215,7 @@ export class RouterState {
 		this.#changedSources.clear()
 		this.#changedNodes.clear()
 		this.#changedNodeMetrics.clear()
+		this.#changedAppIds.clear()
 		return changes
 	}
 
@@ -222,9 +235,9 @@ export class RouterState {
 			consumers.map((c) => reuse(destinations, c, fabric.id)),
 		)
 		this.#relabel()
-		// Relabelling only sorts the lists when a label changed
-		this.#sources.sort(byLabel)
-		this.#destinations.sort(byLabel)
+		// Relabelling only sorts the lists when a label changed, and the fabrics may have been renamed
+		this.#sortEndpoints(this.#sources)
+		this.#sortEndpoints(this.#destinations)
 		this.#index = null
 	}
 
@@ -234,9 +247,24 @@ export class RouterState {
 		return (workload?.parentId && this.workloads.get(workload.parentId)) || workload
 	}
 
+	#fabricName(fabricId: string): string {
+		return this.fabrics.find((f) => f.id === fabricId)?.name ?? fabricId
+	}
+
+	/**
+	 * Group the endpoints by fabric, then sort them by label. Dropdowns list them in this order, so each fabric's
+	 * endpoints stay together.
+	 */
+	#sortEndpoints(list: Array<RouterSource | RouterDestination>): void {
+		const fabricNames = new Map(this.fabrics.map((f) => [f.id, f.name]))
+		const fabricOf = (e: RouterSource | RouterDestination) => ({ label: fabricNames.get(e.fabricId) ?? e.fabricId })
+		list.sort((a, b) => byLabel(fabricOf(a), fabricOf(b)) || byLabel(a, b))
+	}
+
 	/**
 	 * Recompute every label, as one endpoint's label depends on how many others share its app (and on the app's
-	 * name), then re-sort. Labels only name the fabric when there is more than one. Returns whether any changed.
+	 * name), then re-sort. With more than one fabric, a label ends with the fabric's name, after the endpoint's own
+	 * so the part that tells endpoints apart comes first. Returns whether any changed.
 	 */
 	#relabel(): boolean {
 		let changed = false
@@ -250,17 +278,14 @@ export class RouterState {
 			for (const endpoint of list) {
 				const app = this.#appOf(endpoint)
 				const name = displayName(endpoint, app, !!app && perApp.get(app.id) === 1)
-				const label =
-					this.fabrics.length < 2
-						? name
-						: `${this.fabrics.find((f) => f.id === endpoint.fabricId)?.name ?? endpoint.fabricId} / ${name}`
+				const label = this.fabrics.length < 2 ? name : `${name} (${this.#fabricName(endpoint.fabricId)})`
 				if (label !== endpoint.label) {
 					endpoint.label = label
 					listChanged = true
 				}
 			}
 			if (listChanged) {
-				list.sort(byLabel)
+				this.#sortEndpoints(list)
 				this.#index = null
 			}
 			changed ||= listChanged
@@ -294,6 +319,7 @@ export class RouterState {
 			this.#sources.map((s) => [s.id, s.label]),
 			this.#destinations.map((d) => [d.id, d.label]),
 			this.nodes.map((n) => [n.id, n.name]),
+			this.apps.map((a) => [a.id, appName(a)]),
 		])
 	}
 
@@ -486,27 +512,83 @@ export class RouterState {
 	 */
 	upsertWorkload(update: WorkloadUpdate): UpsertResult {
 		const existing = this.workloads.get(update.id)
+		const known = <K extends keyof AmppWorkload>(field: K, fallback: AmppWorkload[K]): AmppWorkload[K] =>
+			update[field] !== undefined ? update[field] : (existing?.[field] ?? fallback)
 		const workload: AmppWorkload = {
 			id: update.id,
 			name: update.name ?? existing?.name ?? update.id,
-			alias: update.alias !== undefined ? update.alias : (existing?.alias ?? null),
-			parentId: update.parentId !== undefined ? update.parentId : (existing?.parentId ?? null),
-			state: update.state !== undefined ? update.state : (existing?.state ?? null),
+			alias: known('alias', null),
+			parentId: known('parentId', null),
+			state: known('state', null),
+			desiredState: known('desiredState', null),
+			error: known('error', null),
+			nodeName: known('nodeName', null),
+			packageName: known('packageName', null),
 		}
 		this.workloads.set(workload.id, workload)
 
 		const renamed =
 			existing?.name !== workload.name || existing.alias !== workload.alias || existing.parentId !== workload.parentId
-		if (renamed && this.#relabel()) {
+		// A new, renamed or reparented app changes the app dropdowns and variable definitions
+		const isApp = !workload.parentId
+		const wasApp = !!existing && !existing.parentId
+		const appListChanged = isApp !== wasApp || (isApp && renamed)
+		const relabelled = renamed && this.#relabel()
+		if (appListChanged || relabelled) {
 			this.#listsChanged = true
 			return 'list'
 		}
-		if (existing?.state === workload.state) return 'unchanged'
 
-		// The endpoints show their own workload's state
-		for (const d of this.#destinations) if (d.workloadId === workload.id) this.#changedDestinations.add(d)
-		for (const s of this.#sources) if (s.workloadId === workload.id) this.#changedSources.add(s)
+		const stateChanged = existing?.state !== workload.state
+		const appChanged =
+			stateChanged ||
+			existing?.desiredState !== workload.desiredState ||
+			existing?.error !== workload.error ||
+			existing?.nodeName !== workload.nodeName
+		if (!appChanged) return 'unchanged'
+
+		this.#changedAppIds.add(workload.parentId ?? workload.id)
+		if (stateChanged) {
+			// The endpoints show their own workload's state
+			for (const d of this.#destinations) if (d.workloadId === workload.id) this.#changedDestinations.add(d)
+			for (const s of this.#sources) if (s.workloadId === workload.id) this.#changedSources.add(s)
+		}
 		return 'state'
+	}
+
+	/** The apps (workloads that aren't an app's engine), sorted by name */
+	get apps(): AmppWorkload[] {
+		return [...this.workloads.values()]
+			.filter((w) => !w.parentId)
+			.sort((a, b) => byLabel({ label: appName(a) }, { label: appName(b) }))
+	}
+
+	/** An app by id, then name or alias, as typed into an expression */
+	findApp(ref: string): AmppWorkload | undefined {
+		const value = ref.trim()
+		if (!value) return undefined
+		const app = this.workloads.get(value)
+		if (app && !app.parentId) return app
+		const apps = this.apps
+		return apps.find((a) => a.name === value) ?? apps.find((a) => a.alias === value)
+	}
+
+	appChoices(): DropdownChoice<string>[] {
+		return this.apps.map((a) => ({ id: a.id, label: appName(a) }))
+	}
+
+	#engines(app: AmppWorkload): AmppWorkload[] {
+		return [...this.workloads.values()].filter((w) => w.parentId === app.id)
+	}
+
+	/** The error reason the app reports, else the first of its engines' */
+	appError(app: AmppWorkload): string | null {
+		return app.error ?? this.#engines(app).find((e) => e.error)?.error ?? null
+	}
+
+	/** Whether the app or one of its engines is in the `Error` state, or reports an error reason */
+	appHasError(app: AmppWorkload): boolean {
+		return [app, ...this.#engines(app)].some((w) => w.state === 'Error' || !!w.error)
 	}
 
 	/** The running state of the workload behind an endpoint, e.g. `Running`; null if it isn't known */

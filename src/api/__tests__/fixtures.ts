@@ -21,5 +21,14 @@ export function node(fields: Pick<AmppNode, 'id' | 'name'> & Partial<AmppNode>):
 }
 
 export function workload(fields: Pick<AmppWorkload, 'id' | 'name'> & Partial<AmppWorkload>): AmppWorkload {
-	return { alias: null, parentId: null, state: null, ...fields }
+	return {
+		alias: null,
+		parentId: null,
+		state: null,
+		desiredState: null,
+		error: null,
+		nodeName: null,
+		packageName: null,
+		...fields,
+	}
 }

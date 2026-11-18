@@ -111,19 +111,55 @@ export interface AmppWorkload {
 	alias: string | null
 	/** The app an engine belongs to; null for an app itself */
 	parentId: string | null
-	/** e.g. `Running`, `Stopping`, `Stopped` */
+	/** e.g. `Running`, `Starting`, `Stopping`, `Ready` (stopped), `Error`; null before it's placed on a node */
 	state: string | null
+	/** What AMPP is trying to make it: `Running`, `Ready` (stopped) or `Removed` */
+	desiredState: string | null
+	/** Why it failed, e.g. `Unplaced` when no node could run it; null when it hasn't */
+	error: string | null
+	/** The node it runs on */
+	nodeName: string | null
+	/** e.g. `GV.AMPP.Apps.Clock` */
+	packageName: string | null
 }
+
+/** AMPP's workload states, most used first, as its State Manager API names them */
+export const WORKLOAD_STATES = [
+	'Running',
+	'Starting',
+	'Stopping',
+	'Ready',
+	'Error',
+	'Provisioning',
+	'Unprovisioning',
+	'Unprovisioned',
+	'Selection',
+	'Removed',
+] as const
+
+export type WorkloadState = (typeof WORKLOAD_STATES)[number]
 
 /** What a notification says about a workload; a field it leaves out keeps its last known value */
 export type WorkloadUpdate = Pick<AmppWorkload, 'id'> & Partial<Omit<AmppWorkload, 'id'>>
+
+export interface RawWorkloadNodeState {
+	state?: string | null
+	nodeName?: string | null
+	errorReason?: string | null
+	errorReasonCode?: string | null
+}
 
 export interface RawWorkload {
 	id?: string | null
 	name?: string | null
 	alias?: string | null
 	parentId?: string | null
-	state?: { state?: string | null } | null
+	packageName?: string | null
+	desiredState?: { state?: string | null } | null
+	/** Its state on the node it's assigned to */
+	state?: RawWorkloadNodeState | null
+	/** Its state on each node it's on */
+	states?: Array<RawWorkloadNodeState | null> | null
 }
 
 export interface WorkloadsResponse {

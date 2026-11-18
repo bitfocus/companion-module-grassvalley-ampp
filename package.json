@@ -12,7 +12,8 @@
 		"dev": "tsc -p tsconfig.build.json --watch",
 		"lint:raw": "eslint",
 		"lint": "run lint:raw .",
-		"test": "vitest run"
+		"test": "vitest run",
+		"test:e2e": "vitest run --config vitest.e2e.config.ts"
 	},
 	"license": "MIT",
 	"repository": {

@@ -35,6 +35,7 @@ const NOTHING: StateChanges = {
 	sources: [],
 	nodes: [],
 	nodeMetrics: [],
+	apps: [],
 }
 
 function nodeEvent(id: string, name: string, online: boolean, running = 2): PlatformNotification {

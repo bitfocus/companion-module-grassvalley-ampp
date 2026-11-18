@@ -23,23 +23,43 @@ export function toNode(id: string, name: string, nodeState: RawNodeState | null 
 	}
 }
 
-export function toWorkload(workload: RawWorkload & { id: string; name: string }): AmppWorkload {
+/** The first failure its node states report: the reason, else just its code (e.g. `Unplaced`) */
+function workloadError(workload: RawWorkload): string | null {
+	for (const nodeState of [workload.state, ...(workload.states ?? [])]) {
+		const error = nodeState?.errorReason || nodeState?.errorReasonCode
+		if (error) return error
+	}
+	return null
+}
+
+function toWorkload(workload: RawWorkload & { id: string; name: string }): AmppWorkload {
 	return {
 		id: workload.id,
 		name: workload.name,
 		alias: workload.alias || null,
 		parentId: workload.parentId || null,
 		state: workload.state?.state || null,
+		desiredState: workload.desiredState?.state || null,
+		error: workloadError(workload),
+		nodeName: workload.state?.nodeName || null,
+		packageName: workload.packageName || null,
 	}
 }
 
-/** Only the fields the notification carries, so the rest keep their last known values */
+/**
+ * Only the fields the notification carries, so the rest keep their last known values. Notifications carry the whole
+ * workload, desired state and node states included; older ones may carry less.
+ */
 export function toWorkloadUpdate(id: string, workload: RawWorkload, state: string | null | undefined): WorkloadUpdate {
+	const hasNodeStates = 'state' in workload || 'states' in workload
 	return {
 		id,
 		...(workload.name ? { name: workload.name } : {}),
 		...('alias' in workload ? { alias: workload.alias || null } : {}),
 		...('parentId' in workload ? { parentId: workload.parentId || null } : {}),
+		...('packageName' in workload ? { packageName: workload.packageName || null } : {}),
+		...('desiredState' in workload ? { desiredState: workload.desiredState?.state || null } : {}),
+		...(hasNodeStates ? { error: workloadError(workload), nodeName: workload.state?.nodeName || null } : {}),
 		...(state !== undefined ? { state } : {}),
 	}
 }

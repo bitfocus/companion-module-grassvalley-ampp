@@ -1,7 +1,14 @@
 import { combineRgb, type DropdownChoice } from '@companion-module/base'
-import type { TallyState } from './api/types.js'
+import { WORKLOAD_STATES, type TallyState, type WorkloadState } from './api/types.js'
 import type ModuleInstance from './main.js'
-import { destinationOption, nodeOption, sourceOption, sourceOrDestinationOption } from './options.js'
+import {
+	appOption,
+	destinationOption,
+	DISCONNECT_CHOICE,
+	nodeOption,
+	sourceOption,
+	sourceOrDestinationOption,
+} from './options.js'
 
 export type TallyLevel = Exclude<TallyState, 'Off'> | 'any'
 
@@ -51,7 +58,59 @@ export type FeedbacksSchema = {
 			node: string
 		}
 	}
+	destination_selected: {
+		type: 'boolean'
+		options: {
+			destination: string
+		}
+	}
+	routed_to_selected: {
+		type: 'boolean'
+		options: {
+			source: string
+		}
+	}
+	source_selected: {
+		type: 'boolean'
+		options: {
+			source: string
+		}
+	}
+	selected_source: {
+		type: 'boolean'
+		options: Record<string, never>
+	}
+	app_state: {
+		type: 'boolean'
+		options: {
+			app: string
+			state: WorkloadState
+		}
+	}
+	any_app_state: {
+		type: 'boolean'
+		options: {
+			state: WorkloadState
+		}
+	}
+	app_error: {
+		type: 'boolean'
+		options: {
+			app: string
+		}
+	}
 }
+
+/** The feedbacks re-checked whenever an app's state changes */
+export const APP_FEEDBACKS = ['app_state', 'any_app_state', 'app_error'] as const
+
+/** The feedbacks re-checked whenever the selected destination or selected source changes */
+export const SELECTION_FEEDBACKS = [
+	'destination_selected',
+	'routed_to_selected',
+	'source_selected',
+	'selected_source',
+] as const
 
 /** Whether an endpoint's tally state counts as on for the chosen level */
 export function tallyMatches(state: TallyState | null, level: TallyLevel): boolean {
@@ -61,6 +120,15 @@ export function tallyMatches(state: TallyState | null, level: TallyLevel): boole
 
 export function UpdateFeedbacks(self: ModuleInstance): void {
 	const source = sourceOption(self.state.sourceChoices())
+	const app = appOption(self.state.appChoices())
+	const appState = {
+		id: 'state',
+		type: 'dropdown',
+		label: 'State',
+		choices: WORKLOAD_STATES.map((state) => ({ id: state, label: state })),
+		default: 'Running',
+	} as const
+	const sourceOrDisconnect = sourceOption([DISCONNECT_CHOICE, ...self.state.sourceChoices()])
 	const destination = destinationOption(self.state.destinationChoices())
 	const endpoint = sourceOrDestinationOption(self.state.endpointChoices())
 
@@ -79,7 +147,7 @@ export function UpdateFeedbacks(self: ModuleInstance): void {
 	self.setFeedbackDefinitions({
 		routed: {
 			type: 'boolean',
-			name: 'Source routed to destination',
+			name: 'Source Routed',
 			defaultStyle: { bgcolor: combineRgb(0, 204, 0), color: combineRgb(0, 0, 0) },
 			options: [source, destination],
 			callback: (feedback) => {
@@ -90,14 +158,14 @@ export function UpdateFeedbacks(self: ModuleInstance): void {
 		},
 		locked: {
 			type: 'boolean',
-			name: 'Destination locked',
+			name: 'Destination Locked',
 			defaultStyle: { bgcolor: combineRgb(204, 0, 0), color: combineRgb(255, 255, 255) },
 			options: [destination],
 			callback: (feedback) => !!self.state.findDestination(feedback.options.destination)?.locked,
 		},
 		tally: {
 			type: 'boolean',
-			name: 'Destination tally',
+			name: 'Destination Tally',
 			defaultStyle: { bgcolor: combineRgb(255, 0, 0), color: combineRgb(255, 255, 255) },
 			options: [destination, levelOption],
 			callback: (feedback) =>
@@ -108,7 +176,7 @@ export function UpdateFeedbacks(self: ModuleInstance): void {
 		},
 		source_tally: {
 			type: 'boolean',
-			name: 'Source tally',
+			name: 'Source Tally',
 			defaultStyle: { bgcolor: combineRgb(255, 0, 0), color: combineRgb(255, 255, 255) },
 			options: [source, levelOption],
 			callback: (feedback) =>
@@ -116,15 +184,16 @@ export function UpdateFeedbacks(self: ModuleInstance): void {
 		},
 		endpoint_enabled: {
 			type: 'boolean',
-			name: 'Source or destination enabled',
+			name: 'Endpoint Enabled',
+			description: 'Whether a source or destination is enabled',
 			defaultStyle: { bgcolor: combineRgb(0, 204, 0), color: combineRgb(0, 0, 0) },
 			options: [endpoint],
 			callback: (feedback) => !!self.state.findAnyEndpoint(feedback.options.endpoint)?.enabled,
 		},
 		endpoint_running: {
 			type: 'boolean',
-			name: "Source or destination's app running",
-			description: 'Whether the AMPP app behind it is in the Running state',
+			name: 'Endpoint Running',
+			description: 'Whether the AMPP app behind a source or destination is in the Running state',
 			defaultStyle: { bgcolor: combineRgb(0, 204, 0), color: combineRgb(0, 0, 0) },
 			options: [endpoint],
 			callback: (feedback) => {
@@ -134,11 +203,73 @@ export function UpdateFeedbacks(self: ModuleInstance): void {
 		},
 		node_online: {
 			type: 'boolean',
-			name: 'Node online',
+			name: 'Node Online',
 			description: 'Whether an AMPP node is online',
 			defaultStyle: { bgcolor: combineRgb(0, 204, 0), color: combineRgb(0, 0, 0) },
 			options: [nodeOption(self.state.nodeChoices())],
 			callback: (feedback) => !!self.state.findNodeByRef(feedback.options.node)?.online,
+		},
+		destination_selected: {
+			type: 'boolean',
+			name: 'Destination Selected',
+			defaultStyle: { bgcolor: combineRgb(255, 255, 0), color: combineRgb(0, 0, 0) },
+			options: [destination],
+			callback: (feedback) => {
+				const selected = self.selection.destination
+				return !!selected && self.state.findDestination(feedback.options.destination) === selected
+			},
+		},
+		routed_to_selected: {
+			type: 'boolean',
+			name: 'Routed To Selected Destination',
+			description: '(Disconnect) matches a selected destination with nothing routed to it',
+			defaultStyle: { bgcolor: combineRgb(255, 0, 0), color: combineRgb(0, 0, 0) },
+			options: [sourceOrDisconnect],
+			callback: (feedback) => self.selection.isRoutedToSelected(feedback.options.source),
+		},
+		source_selected: {
+			type: 'boolean',
+			name: 'Source Selected',
+			description: 'Whether this source is selected, waiting for Take',
+			defaultStyle: { bgcolor: combineRgb(255, 255, 0), color: combineRgb(0, 0, 0) },
+			options: [sourceOrDisconnect],
+			callback: (feedback) => self.selection.isSourceSelected(feedback.options.source),
+		},
+		selected_source: {
+			type: 'boolean',
+			name: 'Selected Source',
+			description: 'Whether a source is selected, waiting for Take, e.g. to light a Take button',
+			defaultStyle: { bgcolor: combineRgb(0, 255, 0), color: combineRgb(0, 0, 0) },
+			options: [],
+			callback: () => self.selection.sourceId !== null,
+		},
+		app_state: {
+			type: 'boolean',
+			name: 'App State',
+			description: "Whether an app is in this state, as AMPP reports the app's own state (Ready is stopped)",
+			defaultStyle: { bgcolor: combineRgb(0, 204, 0), color: combineRgb(0, 0, 0) },
+			options: [app, appState],
+			callback: (feedback) => self.state.findApp(feedback.options.app)?.state === feedback.options.state,
+		},
+		any_app_state: {
+			type: 'boolean',
+			name: 'Any App State',
+			description: 'Whether any app is in this state, e.g. Error for a system alarm button',
+			defaultStyle: { bgcolor: combineRgb(204, 0, 0), color: combineRgb(255, 255, 255) },
+			options: [appState],
+			callback: (feedback) => self.state.apps.some((a) => a.state === feedback.options.state),
+		},
+		app_error: {
+			type: 'boolean',
+			name: 'App Error',
+			description:
+				'Whether an app or one of its engines is in Error or reports an error reason, e.g. Unplaced when no node can run it',
+			defaultStyle: { bgcolor: combineRgb(204, 0, 0), color: combineRgb(255, 255, 255) },
+			options: [app],
+			callback: (feedback) => {
+				const found = self.state.findApp(feedback.options.app)
+				return !!found && self.state.appHasError(found)
+			},
 		},
 	})
 }

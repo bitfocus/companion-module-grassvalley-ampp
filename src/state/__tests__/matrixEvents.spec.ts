@@ -155,8 +155,8 @@ describe('applyMatrixEvents', () => {
 		])
 
 		expect(state.destinations.map((d) => [d.id, d.fabricId, d.label])).toEqual([
-			['c1', FABRIC, 'Mesh / MV 1'],
-			['c2', 'f2', 'Remote / MV 1'],
+			['c1', FABRIC, 'MV 1 (Mesh)'],
+			['c2', 'f2', 'MV 1 (Remote)'],
 		])
 	})
 

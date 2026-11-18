@@ -244,7 +244,7 @@ describe('RouterState with several fabrics', () => {
 		state.setEndpoints([
 			{
 				fabric: { id: 'f1', name: 'Studio' },
-				producers: [producer({ id: 'p1', name: 'Cam 1', alias: null })],
+				producers: [producer({ id: 'p1', name: 'Cam 1', alias: null }), producer({ id: 'p3', name: 'Aerial' })],
 				consumers: [named('c1', 'MV 1')],
 			},
 			{
@@ -256,21 +256,41 @@ describe('RouterState with several fabrics', () => {
 		return state
 	}
 
-	it("records each endpoint's fabric and names it in the label, grouping by fabric", () => {
+	it("records each endpoint's fabric and names it after the label, grouping by fabric", () => {
 		const state = makeTwoFabrics()
 
 		expect(state.sources.map((s) => [s.id, s.fabricId, s.label])).toEqual([
-			['p2', 'F2', 'Remote / Wide'],
-			['p1', 'f1', 'Studio / Cam 1'],
+			['p2', 'F2', 'Wide (Remote)'],
+			['p3', 'f1', 'Aerial (Studio)'],
+			['p1', 'f1', 'Cam 1 (Studio)'],
 		])
 		expect(state.destinationChoices()).toEqual([
-			{ id: 'c2', label: 'Remote / MV 1' },
-			{ id: 'c1', label: 'Studio / MV 1' },
+			{ id: 'c2', label: 'MV 1 (Remote)' },
+			{ id: 'c1', label: 'MV 1 (Studio)' },
 		])
 	})
 
 	it('leaves the fabric out of labels when there is only one', () => {
-		expect(makeState().sources.every((s) => !s.label.includes('/'))).toBe(true)
+		expect(makeState().sources.every((s) => !s.label.includes('('))).toBe(true)
+	})
+
+	it('regroups the endpoints when a fabric is renamed', () => {
+		const state = makeTwoFabrics()
+
+		state.setEndpoints([
+			{
+				fabric: { id: 'f1', name: 'Studio' },
+				producers: [producer({ id: 'p1', name: 'Cam 1', alias: null }), producer({ id: 'p3', name: 'Aerial' })],
+				consumers: [],
+			},
+			{
+				fabric: { id: 'F2', name: 'Truck' },
+				producers: [producer({ id: 'p2', name: 'Cam 1', alias: 'Wide' })],
+				consumers: [],
+			},
+		])
+
+		expect(state.sources.map((s) => s.label)).toEqual(['Aerial (Studio)', 'Cam 1 (Studio)', 'Wide (Truck)'])
 	})
 
 	it('labels an added or renamed endpoint with its fabric', () => {
@@ -279,8 +299,8 @@ describe('RouterState with several fabrics', () => {
 		state.upsertConsumer('F2', named('c3', 'MV 2'))
 		state.upsertProducer('f1', producer({ id: 'p1', name: 'Cam 1', alias: 'Close' }))
 
-		expect(state.findDestination('c3')).toMatchObject({ fabricId: 'F2', label: 'Remote / MV 2' })
-		expect(state.findSource('p1')?.label).toBe('Studio / Close')
+		expect(state.findDestination('c3')).toMatchObject({ fabricId: 'F2', label: 'MV 2 (Remote)' })
+		expect(state.findSource('p1')?.label).toBe('Close (Studio)')
 	})
 
 	it('keeps an endpoint on its fabric when updated', () => {

@@ -3,6 +3,7 @@ import { coalesce } from '../util/coalesce.js'
 import { errorMessage } from '../util/errorMessage.js'
 import { AmppClient, classifyFailure, normalisePlatformUrl } from './AmppClient.js'
 import { ClusterStateApi } from './ClusterStateApi.js'
+import { ControlApi } from './ControlApi.js'
 import { MatrixApi } from './MatrixApi.js'
 import {
 	CLUSTER_TOPICS,
@@ -22,6 +23,7 @@ const FABRIC_POLL_MS = 60_000
 export interface Apis {
 	matrix: MatrixApi
 	cluster: ClusterStateApi
+	control: ControlApi
 }
 
 /** One connection to AMPP, from logging in until it's ended or drops */
@@ -150,7 +152,11 @@ export class Connection {
 			// From here #endSession closes it, which silences its callbacks
 			this.#listener = listener
 			const session: Session = {
-				apis: { matrix: new MatrixApi(client, signal), cluster: new ClusterStateApi(client, signal) },
+				apis: {
+					matrix: new MatrixApi(client, signal),
+					cluster: new ClusterStateApi(client, signal),
+					control: new ControlApi(client, signal),
+				},
 				signal,
 				reload: coalesce(async () => this.#refresh(session, listener)),
 			}

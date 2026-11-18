@@ -2,7 +2,8 @@ import type { DropdownChoice } from '@companion-module/base'
 
 /** The route action's source for clearing a destination; AMPP ids are GUIDs, so it can't clash with one */
 export const DISCONNECT_SOURCE = 'disconnect'
-export const DISCONNECT_CHOICE: DropdownChoice<string> = { id: DISCONNECT_SOURCE, label: '(Disconnect)' }
+export const DISCONNECT_LABEL = '(Disconnect)'
+export const DISCONNECT_CHOICE: DropdownChoice<string> = { id: DISCONNECT_SOURCE, label: DISCONNECT_LABEL }
 
 /** A picker that also takes a value typed as an expression, such as a name */
 function pickerOption<Id extends string>(
@@ -37,7 +38,11 @@ export function destinationOption(choices: DropdownChoice<string>[]): PickerOpti
 }
 
 export function sourceOrDestinationOption(choices: DropdownChoice<string>[]): PickerOption<'endpoint'> {
-	return endpointOption('endpoint', 'Source or destination', choices)
+	return endpointOption('endpoint', 'Source Or Destination', choices)
+}
+
+export function appOption(choices: DropdownChoice<string>[]): PickerOption<'app'> {
+	return pickerOption('app', 'App', choices, 'The ID, name or alias of the app')
 }
 
 export function nodeOption(choices: DropdownChoice<string>[]): PickerOption<'node'> {

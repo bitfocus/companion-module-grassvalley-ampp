@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest'
 import { UpdateActions } from '../actions.js'
 import { UpdateFeedbacks } from '../feedbacks.js'
 import type ModuleInstance from '../main.js'
+import { Selection } from '../commands.js'
 import { RouterState } from '../state/RouterState.js'
 import {
 	destinationVariableValues,
 	nodeVariableValues,
+	selectionVariableValues,
+	appSummaryValues,
+	appVariableValues,
 	sourceVariableValues,
 	UpdateVariableDefinitions,
 } from '../variables.js'
@@ -17,7 +21,11 @@ const DESTINATION = '9593a95e-9ada-46b7-b75c-a01fdfb2472b'
 function makeState(): RouterState {
 	const state = new RouterState()
 	state.setNodes([node({ id: 'n1', name: 'Node A', online: false, runningWorkloads: 0 })])
-	state.setWorkloads([workload({ id: 'w1', name: 'engine', state: 'Running' })])
+	state.setWorkloads([
+		workload({ id: 'w1', name: 'engine', state: 'Running' }),
+		// Should be running, but AMPP couldn't place it on a node
+		workload({ id: 'a2', name: 'clip-player', state: null, desiredState: 'Running', error: 'Unplaced' }),
+	])
 	state.setEndpoints([
 		{
 			fabric: { id: 'f1', name: 'Studio' },
@@ -40,25 +48,32 @@ function makeModule(state: RouterState) {
 		actions: {},
 		feedbacks: {},
 	}
+	// With the destination selected, as the selection feedbacks and variables read it
+	const selection = new Selection(state)
+	selection.setDestination(DESTINATION)
 	const self = {
 		state,
+		selection,
 		setVariableDefinitions: (definitions: Definitions) => (registered.variables = definitions),
 		setActionDefinitions: (definitions: Definitions) => (registered.actions = definitions),
 		setFeedbackDefinitions: (definitions: Definitions) => (registered.feedbacks = definitions),
 	} as unknown as ModuleInstance
-	return { self, registered }
+	return { self, registered, selection }
 }
 
 describe('variable definitions', () => {
 	it('define every variable the module sets a value for', () => {
 		const state = makeState()
-		const { self, registered } = makeModule(state)
+		const { self, registered, selection } = makeModule(state)
 		UpdateVariableDefinitions(self)
 
 		const values = {
 			...destinationVariableValues(state, state.destinations),
 			...sourceVariableValues(state, state.sources),
 			...nodeVariableValues(state.nodes),
+			...selectionVariableValues(state, selection),
+			...appVariableValues(state, state.apps),
+			...appSummaryValues(state),
 		}
 		expect(Object.keys(values).filter((id) => !(id in registered.variables))).toEqual([])
 	})
@@ -105,6 +120,13 @@ describe('feedbacks', () => {
 		return registered.feedbacks[feedbackId].callback({ options }, {})
 	}
 
+	it('show the selected destination and the source routed to it', () => {
+		expect(check('destination_selected', { destination: 'Monitor' })).toBe(true)
+		expect(check('routed_to_selected', { source: 'Cam 1' })).toBe(true)
+		expect(check('source_selected', { source: SOURCE })).toBe(false)
+		expect(check('selected_source', {})).toBe(false)
+	})
+
 	it('show a route, by id, name or alias', () => {
 		expect(check('routed', { source: SOURCE, destination: DESTINATION })).toBe(true)
 		expect(check('routed', { source: 'Cam 1', destination: 'Monitor' })).toBe(true)
@@ -124,5 +146,39 @@ describe('feedbacks', () => {
 		expect(check('endpoint_running', { endpoint: DESTINATION })).toBe(false)
 		expect(check('node_online', { node: 'Node A' })).toBe(false)
 		expect(check('node_online', { node: 'unknown' })).toBe(false)
+	})
+
+	it("show an app's state as AMPP names it, and whether any app is in one", () => {
+		expect(check('app_state', { app: 'engine', state: 'Running' })).toBe(true)
+		expect(check('app_state', { app: 'engine', state: 'Ready' })).toBe(false)
+		expect(check('app_state', { app: 'unknown', state: 'Running' })).toBe(false)
+		expect(check('any_app_state', { state: 'Running' })).toBe(true)
+		expect(check('any_app_state', { state: 'Error' })).toBe(false)
+	})
+
+	it('show an app in error, including one AMPP could not place on a node', () => {
+		expect(check('app_error', { app: 'clip-player' })).toBe(true)
+		expect(check('app_error', { app: 'engine' })).toBe(false)
+		expect(check('app_error', { app: 'unknown' })).toBe(false)
+	})
+})
+
+describe('app variables', () => {
+	it("give each app's state and error, and count those Running and in error", () => {
+		const state = makeState()
+
+		expect(appVariableValues(state, state.apps)).toMatchObject({
+			app_a2_name: 'clip-player',
+			app_a2_state: '',
+			app_a2_error: 'Unplaced',
+			app_w1_state: 'Running',
+			app_w1_error: '',
+		})
+		expect(appSummaryValues(state)).toEqual({
+			apps_total: 2,
+			apps_running: 1,
+			apps_error: 1,
+			apps_error_names: 'clip-player',
+		})
 	})
 })

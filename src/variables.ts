@@ -1,7 +1,10 @@
 import type { CompanionVariableDefinitions } from '@companion-module/base'
-import type { NodeMetrics } from './api/types.js'
+import type { AmppWorkload, NodeMetrics } from './api/types.js'
 import type ModuleInstance from './main.js'
+import { DISCONNECT_LABEL, DISCONNECT_SOURCE } from './options.js'
+import type { Selection } from './commands.js'
 import {
+	appName,
 	distinctAlias,
 	type RouterDestination,
 	type RouterNode,
@@ -15,6 +18,11 @@ export type VariablesSchema = {
 	last_route: string
 	last_route_status: string
 	last_route_error: string
+	selected_destination: string
+	selected_destination_id: string
+	selected_destination_source: string
+	selected_source: string
+	selected_source_id: string
 	[variableId: `${EndpointPrefix}_name`]: string
 	[variableId: `${EndpointPrefix}_app`]: string
 	[variableId: `${EndpointPrefix}_state`]: string
@@ -29,7 +37,14 @@ export type VariablesSchema = {
 	[variableId: `node_${string}_running_workloads`]: number | null
 	[variableId: `node_${string}_total_workloads`]: number | null
 	[variableId: `node_${string}_${MetricVariable}`]: number | null
+	apps_total: number
+	apps_running: number
+	apps_error: number
+	apps_error_names: string
+	[variableId: `app_${string}_${AppVariable}`]: string
 }
+
+type AppVariable = 'name' | 'state' | 'error' | 'node'
 
 type MetricVariable =
 	'cpu' | 'memory' | 'gpu' | 'gpu_encoder' | 'gpu_decoder' | 'gpu_memory' | 'disk_free' | 'ntp_offset'
@@ -62,11 +77,24 @@ export function nodeVariablePrefix(nodeId: string): `node_${string}` {
 	return variablePrefix('node', nodeId)
 }
 
+export function appVariablePrefix(appId: string): `app_${string}` {
+	return variablePrefix('app', appId)
+}
+
 export function UpdateVariableDefinitions(self: ModuleInstance): void {
 	const definitions: CompanionVariableDefinitions<VariablesSchema> = {
 		last_route: { name: 'Last route requested (source → destination)' },
 		last_route_status: { name: 'Status of the last route request' },
 		last_route_error: { name: 'Error from the last route request, if any' },
+		selected_destination: { name: 'Selected destination' },
+		selected_destination_id: { name: 'Selected destination id' },
+		selected_destination_source: { name: "The selected destination's routed source" },
+		selected_source: { name: 'Source waiting for Take' },
+		selected_source_id: { name: 'Id of the source waiting for Take' },
+		apps_total: { name: 'Apps: total' },
+		apps_running: { name: 'Apps: Running' },
+		apps_error: { name: 'Apps: in Error, or reporting an error (including their engines)' },
+		apps_error_names: { name: 'Apps: names of those in error' },
 	}
 	const endpointDefinitions = (prefix: EndpointPrefix, label: string) => {
 		definitions[`${prefix}_name`] = { name: `${label}: name` }
@@ -95,6 +123,14 @@ export function UpdateVariableDefinitions(self: ModuleInstance): void {
 		definitions[`${prefix}_total_workloads`] = { name: `Node ${node.name}: total workloads` }
 		for (const metric of METRICS) definitions[`${prefix}_${metric.id}`] = { name: `Node ${node.name}: ${metric.name}` }
 	}
+	for (const app of self.state.apps) {
+		const prefix = appVariablePrefix(app.id)
+		const name = appName(app)
+		definitions[`${prefix}_name`] = { name: `App ${name}: name` }
+		definitions[`${prefix}_state`] = { name: `App ${name}: state (e.g. Running, or Ready when stopped)` }
+		definitions[`${prefix}_error`] = { name: `App ${name}: error reason, if it or an engine reports one` }
+		definitions[`${prefix}_node`] = { name: `App ${name}: node` }
+	}
 	self.setVariableDefinitions(definitions)
 }
 
@@ -120,9 +156,7 @@ export function destinationVariableValues(
 	for (const destination of destinations) {
 		const prefix = destinationVariablePrefix(destination.id)
 		Object.assign(values, endpointValues(state, prefix, destination))
-		const routed = destination.routedProducerId
-		// A source we don't know about (e.g. added since the lists were loaded) still shows its id
-		values[`${prefix}_source`] = routed ? (state.sourceById(routed)?.label ?? routed) : ''
+		values[`${prefix}_source`] = routedSourceLabel(state, destination)
 		values[`${prefix}_source_id`] = destination.routedProducerId ?? ''
 		values[`${prefix}_locked`] = destination.locked
 	}
@@ -139,6 +173,25 @@ export function sourceVariableValues(state: RouterState, sources: readonly Route
 	return values
 }
 
+/** A source we don't know about (e.g. added since the lists were loaded) still shows its id */
+function routedSourceLabel(state: RouterState, destination: RouterDestination): string {
+	const routed = destination.routedProducerId
+	return routed ? (state.sourceById(routed)?.label ?? routed) : ''
+}
+
+/** The selected destination, what's routed to it, and the source waiting for Take */
+export function selectionVariableValues(state: RouterState, selection: Selection): Partial<VariablesSchema> {
+	const destination = selection.destination
+	const sourceId = selection.sourceId
+	return {
+		selected_destination: destination?.label ?? '',
+		selected_destination_id: destination?.id ?? '',
+		selected_destination_source: destination ? routedSourceLabel(state, destination) : '',
+		selected_source: sourceId === DISCONNECT_SOURCE ? DISCONNECT_LABEL : (selection.source?.label ?? ''),
+		selected_source_id: sourceId ?? '',
+	}
+}
+
 export function nodeVariableValues(nodes: readonly RouterNode[]): Partial<VariablesSchema> {
 	const values: Partial<VariablesSchema> = {}
 	for (const node of nodes) {
@@ -150,4 +203,29 @@ export function nodeVariableValues(nodes: readonly RouterNode[]): Partial<Variab
 		for (const metric of METRICS) values[`${prefix}_${metric.id}`] = node.metrics?.[metric.field] ?? null
 	}
 	return values
+}
+
+/** Each app's name, state, error (its own or an engine's) and node */
+export function appVariableValues(state: RouterState, apps: readonly AmppWorkload[]): Partial<VariablesSchema> {
+	const values: Partial<VariablesSchema> = {}
+	for (const app of apps) {
+		const prefix = appVariablePrefix(app.id)
+		values[`${prefix}_name`] = appName(app)
+		values[`${prefix}_state`] = app.state ?? ''
+		values[`${prefix}_error`] = state.appError(app) ?? ''
+		values[`${prefix}_node`] = app.nodeName ?? ''
+	}
+	return values
+}
+
+/** How many apps there are, how many are Running, and which are in error */
+export function appSummaryValues(state: RouterState): Partial<VariablesSchema> {
+	const apps = state.apps
+	const inError = apps.filter((app) => state.appHasError(app))
+	return {
+		apps_total: apps.length,
+		apps_running: apps.filter((app) => app.state === 'Running').length,
+		apps_error: inError.length,
+		apps_error_names: inError.map(appName).join(', '),
+	}
 }

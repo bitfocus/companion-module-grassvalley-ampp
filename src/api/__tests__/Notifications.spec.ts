@@ -187,7 +187,49 @@ describe('parseClusterEvent', () => {
 			}),
 		).toEqual({
 			kind: 'workload',
-			workload: { id: 'a1', name: 'multiview-01', alias: 'MV Wall', parentId: null, state: 'Running' },
+			workload: {
+				id: 'a1',
+				name: 'multiview-01',
+				alias: 'MV Wall',
+				parentId: null,
+				state: 'Running',
+				error: null,
+				nodeName: null,
+			},
+		})
+	})
+
+	it('reads the desired state, node and error a workload update carries', () => {
+		// Trimmed from a stop on a live system: AMPP sets the desired state, then reports each state on the way
+		const content = {
+			id: 'a1',
+			action: 'updated',
+			previousState: 'Running',
+			workload: {
+				id: 'a1',
+				name: 'signal-gen-02',
+				alias: null,
+				parentId: null,
+				packageName: 'GV.AMPP.Apps.TestSignalGenerator',
+				desiredState: { state: 'Ready', startProperties: null },
+				state: { nodeName: 'aws-project-gvampp-mesh', state: 'Stopping', errorReason: null, errorReasonCode: null },
+				states: [{ nodeName: 'aws-project-gvampp-mesh', state: 'Stopping', errorReason: null, errorReasonCode: null }],
+			},
+		}
+
+		expect(parseClusterEvent({ topic: 'gv.cluster.workload.a1.updated', content: JSON.stringify(content) })).toEqual({
+			kind: 'workload',
+			workload: {
+				id: 'a1',
+				name: 'signal-gen-02',
+				alias: null,
+				parentId: null,
+				packageName: 'GV.AMPP.Apps.TestSignalGenerator',
+				desiredState: 'Ready',
+				error: null,
+				nodeName: 'aws-project-gvampp-mesh',
+				state: 'Stopping',
+			},
 		})
 	})
 

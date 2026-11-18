@@ -1,5 +1,6 @@
 import type { InstanceBase } from '@companion-module/base'
 import type { Session } from './api/Connection.js'
+import type { AppCommand } from './api/ControlApi.js'
 import {
 	classifyClearStatus,
 	classifyRouteStatus,
@@ -10,7 +11,7 @@ import {
 import type { RouteRequest } from './api/types.js'
 import type { ModuleSchema } from './main.js'
 import { DISCONNECT_SOURCE } from './options.js'
-import type { RouterSource, RouterState } from './state/RouterState.js'
+import { appName, type RouterDestination, type RouterSource, type RouterState } from './state/RouterState.js'
 import { errorMessage } from './util/errorMessage.js'
 
 const ROUTE_STATUS_POLL_MS = 500
@@ -22,8 +23,87 @@ export interface CommandContext extends Pick<
 	'log' | 'setVariableValues' | 'getVariableValue'
 > {
 	readonly state: RouterState
+	readonly selection: Selection
 	/** Push what changed in the state out to variables and feedbacks */
 	publishChanges(): void
+	/** Push the selected destination and selected source out to variables and feedbacks */
+	selectionChanged(): void
+}
+
+/** A source's id from its id, name or alias, or DISCONNECT_SOURCE itself; undefined for an unknown source */
+function resolveSource(state: RouterState, sourceRef: string): string | undefined {
+	return sourceRef.trim() === DISCONNECT_SOURCE ? DISCONNECT_SOURCE : state.findSource(sourceRef)?.id
+}
+
+/**
+ * The destination that source buttons route to, and a source waiting for Take. Held by id, so it follows the
+ * endpoints through reloads and renames.
+ */
+export class Selection {
+	readonly #state: RouterState
+	#destinationId: string | null = null
+	/** A source id, or DISCONNECT_SOURCE to clear the destination */
+	#sourceId: string | null = null
+
+	constructor(state: RouterState) {
+		this.#state = state
+	}
+
+	get destination(): RouterDestination | undefined {
+		return this.#destinationId ? this.#state.findDestination(this.#destinationId) : undefined
+	}
+
+	/** The source waiting for Take: a source id, or DISCONNECT_SOURCE */
+	get sourceId(): string | null {
+		return this.#sourceId
+	}
+
+	get source(): RouterSource | undefined {
+		return this.#sourceId && this.#sourceId !== DISCONNECT_SOURCE ? this.#state.sourceById(this.#sourceId) : undefined
+	}
+
+	/** Whether this source (or DISCONNECT_SOURCE) is what's routed to the selected destination */
+	isRoutedToSelected(sourceRef: string): boolean {
+		const destination = this.destination
+		const sourceId = resolveSource(this.#state, sourceRef)
+		if (!destination || !sourceId) return false
+		return destination.routedProducerId === (sourceId === DISCONNECT_SOURCE ? null : sourceId)
+	}
+
+	/** Whether this source (or DISCONNECT_SOURCE) is waiting for Take */
+	isSourceSelected(sourceRef: string): boolean {
+		return !!this.#sourceId && resolveSource(this.#state, sourceRef) === this.#sourceId
+	}
+
+	/** Returns whether it changed; a different destination drops the source selected for the last one */
+	setDestination(destinationId: string): boolean {
+		if (destinationId === this.#destinationId) return false
+		this.#destinationId = destinationId
+		this.#sourceId = null
+		return true
+	}
+
+	/** Returns whether it changed */
+	setSource(sourceId: string | null): boolean {
+		if (sourceId === this.#sourceId) return false
+		this.#sourceId = sourceId
+		return true
+	}
+
+	/** Forget a selected destination or source that's no longer in the lists; returns whether it did */
+	prune(): boolean {
+		let changed = false
+		if (this.#destinationId && !this.destination) {
+			this.#destinationId = null
+			this.#sourceId = null
+			changed = true
+		}
+		if (this.#sourceId && this.#sourceId !== DISCONNECT_SOURCE && !this.source) {
+			this.#sourceId = null
+			changed = true
+		}
+		return changed
+	}
 }
 
 /** Log a failed request and rethrow it as `Could not <what>: <reason>` */
@@ -143,4 +223,69 @@ export async function rename(
 		fail(ctx, e, `rename ${endpoint.label}`, endpoint.id)
 	}
 	ctx.log('info', `Renamed ${kind} ${endpoint.label} to '${alias}' (${endpoint.id})`)
+}
+
+/** Choose the destination that source buttons route to */
+export function selectDestination(ctx: CommandContext, destinationRef: string): void {
+	const destination = ctx.state.findDestination(destinationRef)
+	if (!destination) throw new Error(`Unknown destination: ${destinationRef}`)
+	if (ctx.selection.setDestination(destination.id)) ctx.selectionChanged()
+}
+
+/**
+ * Route a source (or DISCONNECT_SOURCE) to the selected destination, or select it to route on Take. Routing straight
+ * away drops a source selected by another button, so Take can't route that one afterwards.
+ */
+export async function selectSource(
+	ctx: CommandContext,
+	session: Session,
+	sourceRef: string,
+	waitForTake: boolean,
+): Promise<void> {
+	const destination = ctx.selection.destination
+	if (!destination) throw new Error('Select a destination first')
+
+	if (!waitForTake) {
+		if (ctx.selection.setSource(null)) ctx.selectionChanged()
+		await route(ctx, session, sourceRef, destination.id)
+		return
+	}
+
+	const sourceId = resolveSource(ctx.state, sourceRef)
+	if (!sourceId) throw new Error(`Unknown source: ${sourceRef}`)
+	if (ctx.selection.setSource(sourceId)) ctx.selectionChanged()
+}
+
+/** Route the selected source to the selected destination; it stays selected if the route fails, so Take can be retried */
+export async function take(ctx: CommandContext, session: Session): Promise<void> {
+	const destination = ctx.selection.destination
+	const sourceId = ctx.selection.sourceId
+	if (!destination || !sourceId) throw new Error('Nothing to take')
+
+	await route(ctx, session, sourceId, destination.id)
+	// Unless another source was selected while this one was routing
+	if (ctx.selection.sourceId === sourceId && ctx.selection.setSource(null)) ctx.selectionChanged()
+}
+
+export function clearSelectedSource(ctx: CommandContext): void {
+	if (ctx.selection.setSource(null)) ctx.selectionChanged()
+}
+
+/** Ask AMPP to start, stop or restart an app; its state follows as AMPP carries it out */
+export async function controlApp(
+	ctx: CommandContext,
+	session: Session,
+	command: AppCommand,
+	appRef: string,
+): Promise<void> {
+	const app = ctx.state.findApp(appRef)
+	if (!app) throw new Error(`Unknown app: ${appRef}`)
+
+	try {
+		await session.apis.control.command(command, app.id)
+	} catch (e) {
+		fail(ctx, e, `${command} ${appName(app)}`, app.id)
+	}
+	// AMPP has taken the command; the app's state shows it being carried out
+	ctx.log('info', `Asked AMPP to ${command} ${appName(app)} (${app.id})`)
 }

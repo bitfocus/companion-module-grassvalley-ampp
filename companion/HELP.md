@@ -9,14 +9,33 @@ Control routing and monitor tally, apps, and nodes on [Grass Valley AMPP](https:
 
 ### Actions
 
-- **Route source to destination**
-- **Lock or unlock destination**
-- **Rename source** / **Rename destination**
+- **Route Source**
+- **Lock Destination**
+- **Rename Source** / **Rename Destination**
+- **Select Destination** / **Select Source** (optionally **Wait For Take**)
+- **Take** / **Clear Selected Source**
+- **Start App** / **Stop App** / **Restart App**
+
+### Feedbacks
+
+- **Source Routed**
+- **Destination Locked**
+- **Destination Tally** / **Source Tally**
+- **Endpoint Enabled** / **Endpoint Running**
+- **Node Online**
+- **Destination Selected** / **Source Selected** / **Selected Source** / **Routed To Selected Destination**
+- **App State** / **Any App State** / **App Error**
 
 ### Presets
 
-**Node status** has a group for each AMPP node, with buttons for its status (name and running apps), CPU and memory, GPU, and free disk space. Each turns red while its node is offline.
+- **Routing**: destination and source buttons (grouped by fabric), Take, Clear, Disconnect and the selected destination
+- **App status**: a summary, then a status and a hold-to-restart button for each app
+- **Node status** has a group for each AMPP node, with buttons for its status (name and running apps), CPU and memory, GPU, and free disk space. Each turns red while its node is offline.
 
 ### Variables
 
 Each source and destination has variables named by its AMPP id, e.g. `dest_<id>_source` (the routed source's name) and `dest_<id>_source_id` (its id). Others include the lock state, fabric, AMPP package and app state, each source's video format, and each node's online state and performance metrics.
+
+- Apps: `app_<id>_name`, `_state`, `_error`, `_node`
+- App totals: `apps_total`, `apps_running`, `apps_error`, `apps_error_names`
+- Selection: `selected_destination`, `selected_destination_source`, `selected_source`, with `_id` variants
