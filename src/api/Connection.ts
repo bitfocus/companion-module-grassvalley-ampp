@@ -18,6 +18,8 @@ const RECONNECT_MIN_MS = 5_000
 const RECONNECT_MAX_MS = 60_000
 // The hub publishes nothing when a fabric is added, removed or renamed, so the fabric list is checked instead
 const FABRIC_POLL_MS = 60_000
+/** How long a connection may take to load its lists before they're reported complete anyway */
+export const FIRST_LOAD_TIMEOUT_MS = 30_000
 
 /** The APIs of a connected session */
 export interface Apis {
@@ -40,6 +42,11 @@ export interface ConnectionHandlers {
 	updateStatus(status: InstanceStatus, message: string | null): void
 	/** Load the lists for a session, throwing if they can't be loaded */
 	load(session: Session): Promise<void>
+	/**
+	 * Whether the lists have been read completely since connecting: false while connecting and once a session ends,
+	 * true once a session's first load is done, or once it has taken longer than FIRST_LOAD_TIMEOUT_MS
+	 */
+	loadComplete(complete: boolean): void
 	/** Whether these fabrics differ from the ones last loaded */
 	fabricsChanged(fabrics: readonly AmppFabric[]): boolean
 	onNotifications(notifications: readonly PlatformNotification[], session: Session): void
@@ -58,6 +65,7 @@ export class Connection {
 	#session: Session | null = null
 	#reconnectTimer: NodeJS.Timeout | null = null
 	#fabricPollTimer: NodeJS.Timeout | null = null
+	#firstLoadTimer: NodeJS.Timeout | null = null
 	#reconnectDelay = RECONNECT_MIN_MS
 
 	constructor(handlers: ConnectionHandlers) {
@@ -95,6 +103,7 @@ export class Connection {
 	/** End the connection entirely; resolves once the notification hub has disconnected */
 	async stop(): Promise<void> {
 		const closing = this.#endSession()
+		this.#handlers.loadComplete(false)
 		if (this.#reconnectTimer) {
 			clearTimeout(this.#reconnectTimer)
 			this.#reconnectTimer = null
@@ -111,6 +120,7 @@ export class Connection {
 			clearTimeout(this.#fabricPollTimer)
 			this.#fabricPollTimer = null
 		}
+		this.#clearFirstLoadTimer()
 		const listener = this.#listener
 		this.#listener = null
 		await listener?.close()
@@ -122,6 +132,18 @@ export class Connection {
 		const { signal } = attempt
 		const handlers = this.#handlers
 		handlers.updateStatus(InstanceStatus.Connecting, null)
+		handlers.loadComplete(false)
+		// A load that hangs mustn't leave the lists reported incomplete for ever
+		this.#clearFirstLoadTimer()
+		this.#firstLoadTimer = setTimeout(() => {
+			this.#firstLoadTimer = null
+			if (signal.aborted) return
+			handlers.log(
+				'warn',
+				`The lists have not loaded from AMPP after ${FIRST_LOAD_TIMEOUT_MS / 1000} s, so they are reported complete without them`,
+			)
+			handlers.loadComplete(true)
+		}, FIRST_LOAD_TIMEOUT_MS)
 
 		try {
 			await client.login()
@@ -165,6 +187,8 @@ export class Connection {
 			await handlers.load(session)
 			if (signal.aborted) return
 
+			this.#clearFirstLoadTimer()
+			handlers.loadComplete(true)
 			handlers.log('info', 'Connected to AMPP')
 			this.#session = session
 			listener.release()
@@ -180,6 +204,7 @@ export class Connection {
 	/** End the session and, unless the problem needs the user to change the config, reconnect with backoff */
 	#handleConnectError(e: unknown, client: AmppClient): void {
 		void this.#endSession()
+		this.#handlers.loadComplete(false)
 
 		const message = errorMessage(e)
 		this.#handlers.log('error', `AMPP connection failed: ${message}`)
@@ -215,6 +240,13 @@ export class Connection {
 			if (!session.signal.aborted) this.#handlers.log('warn', `Could not refresh the lists: ${errorMessage(e)}`)
 		} finally {
 			listener.release()
+		}
+	}
+
+	#clearFirstLoadTimer(): void {
+		if (this.#firstLoadTimer) {
+			clearTimeout(this.#firstLoadTimer)
+			this.#firstLoadTimer = null
 		}
 	}
 

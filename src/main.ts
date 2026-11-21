@@ -41,6 +41,8 @@ export default class ModuleInstance extends InstanceBase<ModuleSchema> {
 	readonly state = new RouterState()
 	readonly selection = new Selection(this.state)
 	#warnedNoFabrics = false
+	/** What `first_load_complete` was last set to */
+	#firstLoadComplete: boolean | null = null
 	// Notifications are applied as they arrive, then published together once the burst they arrived in is done
 	readonly #publishSoon = oncePerTurn(() => this.publishChanges())
 
@@ -48,6 +50,7 @@ export default class ModuleInstance extends InstanceBase<ModuleSchema> {
 		log: (level, message) => this.log(level, message),
 		updateStatus: (status, message) => this.updateStatus(status, message),
 		load: async (session) => this.#load(session),
+		loadComplete: (complete) => this.#setFirstLoadComplete(complete),
 		fabricsChanged: (fabrics) => this.state.fabricsDiffer(fabrics),
 		onNotifications: (notifications, session) => this.#handleNotifications(notifications, session),
 	})
@@ -60,10 +63,9 @@ export default class ModuleInstance extends InstanceBase<ModuleSchema> {
 		this.config = config
 		this.secrets = secrets
 
-		this.updateActions()
-		this.updateFeedbacks()
-		this.updatePresets()
+		// Variables first: a router reading the empty action choices must already see the lists aren't loaded
 		this.updateVariableDefinitions()
+		this.#setFirstLoadComplete(false)
 		this.setVariableValues({
 			last_route: '',
 			last_route_status: '',
@@ -71,6 +73,9 @@ export default class ModuleInstance extends InstanceBase<ModuleSchema> {
 			...selectionVariableValues(this.state, this.selection),
 			...appSummaryValues(this.state),
 		})
+		this.updateActions()
+		this.updateFeedbacks()
+		this.updatePresets()
 
 		this.#startConnection()
 	}
@@ -151,8 +156,20 @@ export default class ModuleInstance extends InstanceBase<ModuleSchema> {
 
 	#startConnection(): void {
 		this.#warnedNoFabrics = false
+		// Before the lists are cleared, so a router never takes the cleared lists for a loaded platform
+		this.#setFirstLoadComplete(false)
 		this.#clearState()
 		this.#connection.start(this.config.platformUrl ?? '', this.secrets?.apiKey ?? '')
+	}
+
+	/**
+	 * `first_load_complete` tells a router (such as the Bitfocus Buttons middleware) whether the lists are what AMPP
+	 * has, so it doesn't take the empty lists of a connection that is still loading for a platform with no endpoints
+	 */
+	#setFirstLoadComplete(complete: boolean): void {
+		if (this.#firstLoadComplete === complete) return
+		this.#firstLoadComplete = complete
+		this.setVariableValues({ first_load_complete: complete })
 	}
 
 	#clearState(): void {

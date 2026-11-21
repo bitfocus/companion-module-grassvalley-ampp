@@ -18,6 +18,7 @@ export type VariablesSchema = {
 	last_route: string
 	last_route_status: string
 	last_route_error: string
+	first_load_complete: boolean
 	selected_destination: string
 	selected_destination_id: string
 	selected_destination_source: string
@@ -86,6 +87,7 @@ export function UpdateVariableDefinitions(self: ModuleInstance): void {
 		last_route: { name: 'Last route requested (source → destination)' },
 		last_route_status: { name: 'Status of the last route request' },
 		last_route_error: { name: 'Error from the last route request, if any' },
+		first_load_complete: { name: 'Whether the lists have been loaded from AMPP since connecting' },
 		selected_destination: { name: 'Selected destination' },
 		selected_destination_id: { name: 'Selected destination id' },
 		selected_destination_source: { name: "The selected destination's routed source" },
