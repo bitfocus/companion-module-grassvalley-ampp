@@ -65,6 +65,10 @@ export class ModuleHarness {
 	feedbacks: Definitions = {}
 	variableDefinitions: Definitions = {}
 	presets: { structure: Definitions[]; presets: Definitions } = { structure: [], presets: {} }
+	/** As a router reads them: how many destinations each published route action offers, and `first_load_complete` then */
+	readonly actionPublishes: Array<{ destinations: number; firstLoadComplete: unknown }> = []
+	/** How many destinations the route action offered each time `first_load_complete` became true */
+	readonly loadCompletions: number[] = []
 
 	constructor() {
 		;(globalThis as { COMPANION_LOGGER?: unknown }).COMPANION_LOGGER = (
@@ -81,12 +85,19 @@ export class ModuleHarness {
 			sharedUdpSocketHandlers: new Map(),
 			saveConfig: () => {},
 			updateStatus: (status: InstanceStatus, message: string | null) => this.statuses.push({ status, message }),
-			setActionDefinitions: (actions: Definitions) => (this.actions = actions),
+			setActionDefinitions: (actions: Definitions) => {
+				this.actions = actions
+				this.actionPublishes.push({
+					destinations: this.routeDestinations(),
+					firstLoadComplete: this.variables.get('first_load_complete'),
+				})
+			},
 			setFeedbackDefinitions: (feedbacks: Definitions) => (this.feedbacks = feedbacks),
 			setPresetDefinitions: (structure: Definitions[], presets: Definitions) => (this.presets = { structure, presets }),
 			setVariableDefinitions: (definitions: Definitions) => (this.variableDefinitions = definitions),
 			setVariableValues: (values: Record<string, unknown>) => {
 				for (const [id, value] of Object.entries(values)) this.variables.set(id, value)
+				if (values.first_load_complete === true) this.loadCompletions.push(this.routeDestinations())
 			},
 			getVariableValue: (id: string) => this.variables.get(id),
 			checkFeedbacks: (ids: string[]) => this.checkedFeedbacks.push(...ids),
@@ -103,6 +114,10 @@ export class ModuleHarness {
 			sharedUdpSocketSend: async () => {},
 		}
 		this.module = new ModuleInstance(context)
+	}
+
+	routeDestinations(): number {
+		return this.actions.route?.options?.find((o: { id: string }) => o.id === 'destination')?.choices?.length ?? 0
 	}
 
 	get status(): InstanceStatus | undefined {
