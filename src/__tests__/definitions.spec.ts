@@ -97,6 +97,13 @@ describe('router contract with the Buttons middleware', () => {
 		expect(registered.actions.lock.options[1].choices.map((c: { id: string }) => c.id)).toEqual(['L', 'U'])
 	})
 
+	it('defines first_load_complete, which tells the router whether the lists are loaded', () => {
+		const { self, registered } = makeModule(new RouterState())
+		UpdateVariableDefinitions(self)
+
+		expect(registered.variables).toHaveProperty('first_load_complete')
+	})
+
 	it('keeps the routed source id, lock, fabric and label variables', () => {
 		const state = makeState()
 

@@ -284,4 +284,29 @@ describe.skipIf(!config)('module against live AMPP', () => {
 			expect(harness.feedback('app_error', { app: app().id })).toBe(false)
 		})
 	})
+
+	describe('first load', () => {
+		/** A router must never see the route action without its destinations while the lists count as loaded */
+		const emptyWhileComplete = (from: number) =>
+			harness.actionPublishes.slice(from).filter((p) => p.destinations === 0 && p.firstLoadComplete !== false)
+
+		it('reports first_load_complete once the lists are published, and not before', () => {
+			expect(variable('first_load_complete')).toBe(true)
+			expect(harness.actionPublishes[0]?.firstLoadComplete).toBe(false)
+			expect(emptyWhileComplete(0)).toEqual([])
+			expect(harness.loadCompletions).toEqual([state().destinations.length])
+		})
+
+		it('reports the lists incomplete while reconnecting with new settings, until they have loaded again', async () => {
+			const from = harness.actionPublishes.length
+			await harness.module.configUpdated({ platformUrl: config!.url }, { apiKey: config!.apiKey })
+			expect(variable('first_load_complete')).toBe(false)
+
+			await harness.waitFor(() => variable('first_load_complete') === true, 30_000, 'the lists to load again')
+			await harness.waitFor(() => harness.status === InstanceStatus.Ok, 30_000, 'the module to connect again')
+			expect(emptyWhileComplete(from)).toEqual([])
+			expect(harness.loadCompletions.at(-1)).toBe(state().destinations.length)
+			expect(state().destinations.length).toBeGreaterThan(0)
+		})
+	})
 })

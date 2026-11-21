@@ -1,7 +1,7 @@
 import { InstanceStatus } from '@companion-module/base'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AmppAuthError, AmppConnectionError, AmppHttpError } from '../AmppClient.js'
-import { Connection, type ConnectionHandlers, type Session } from '../Connection.js'
+import { Connection, FIRST_LOAD_TIMEOUT_MS, type ConnectionHandlers, type Session } from '../Connection.js'
 import type { NotificationListenerOptions, PlatformNotification } from '../Notifications.js'
 
 const fakes = vi.hoisted(() => ({
@@ -54,12 +54,14 @@ function makeHandlers() {
 		log: vi.fn(),
 		updateStatus: vi.fn(),
 		load: vi.fn(async (_session: Session) => {}),
+		loadComplete: vi.fn((_complete: boolean) => {}),
 		fabricsChanged: vi.fn(() => false),
 		onNotifications: vi.fn(),
 	} satisfies ConnectionHandlers
 }
 
 const lastStatus = (handlers: ReturnType<typeof makeHandlers>) => handlers.updateStatus.mock.calls.at(-1)
+const loadComplete = (handlers: ReturnType<typeof makeHandlers>) => handlers.loadComplete.mock.calls.at(-1)?.[0]
 const flush = async () => vi.advanceTimersByTimeAsync(0)
 const NOTIFICATIONS: PlatformNotification[] = [{ topic: 'gv.cluster.matrix.consumer.updated', content: '{}' }]
 
@@ -242,6 +244,104 @@ describe('Connection', () => {
 		await reloading
 		expect(listener.release).toHaveBeenCalledOnce()
 		expect(handlers.log).toHaveBeenCalledWith('warn', 'Could not refresh the lists: Server error')
+	})
+
+	describe('first load', () => {
+		it('reports the lists incomplete while connecting, and complete once they have loaded', async () => {
+			let finishLoad = () => {}
+			const handlers = makeHandlers()
+			handlers.load.mockImplementationOnce(async () => new Promise<void>((resolve) => (finishLoad = resolve)))
+			const connection = new Connection(handlers)
+
+			connection.start('ampp.example.com', 'key')
+			await flush()
+			expect(loadComplete(handlers)).toBe(false)
+
+			finishLoad()
+			await flush()
+			expect(loadComplete(handlers)).toBe(true)
+			// Reported complete only after the lists were published
+			expect(handlers.loadComplete.mock.invocationCallOrder.at(-1)).toBeGreaterThan(
+				handlers.load.mock.invocationCallOrder[0] ?? Infinity,
+			)
+		})
+
+		it('reports the lists incomplete when the session drops, until the reconnected session has loaded them', async () => {
+			const handlers = makeHandlers()
+			const connection = new Connection(handlers)
+			connection.start('ampp.example.com', 'key')
+			await flush()
+			expect(loadComplete(handlers)).toBe(true)
+
+			let finishLoad = () => {}
+			handlers.load.mockImplementationOnce(async () => new Promise<void>((resolve) => (finishLoad = resolve)))
+			fakes.reportFailure(new AmppConnectionError('ECONNRESET'))
+			expect(loadComplete(handlers)).toBe(false)
+
+			await vi.advanceTimersByTimeAsync(5_000)
+			expect(login).toHaveBeenCalledTimes(2)
+			expect(loadComplete(handlers)).toBe(false)
+
+			finishLoad()
+			await flush()
+			expect(loadComplete(handlers)).toBe(true)
+		})
+
+		it("doesn't report incomplete lists for a reload of a connected session", async () => {
+			const handlers = makeHandlers()
+			const connection = new Connection(handlers)
+			connection.start('ampp.example.com', 'key')
+			await flush()
+			handlers.loadComplete.mockClear()
+
+			await connection.requireSession().reload()
+
+			expect(handlers.load).toHaveBeenCalledTimes(2)
+			expect(handlers.loadComplete).not.toHaveBeenCalled()
+		})
+
+		it('reports the lists complete, with a warning, when they take too long to load', async () => {
+			const handlers = makeHandlers()
+			handlers.load.mockImplementationOnce(async () => new Promise<void>(() => {}))
+			const connection = new Connection(handlers)
+
+			connection.start('ampp.example.com', 'key')
+			await vi.advanceTimersByTimeAsync(FIRST_LOAD_TIMEOUT_MS - 1)
+			expect(loadComplete(handlers)).toBe(false)
+
+			await vi.advanceTimersByTimeAsync(1)
+			expect(loadComplete(handlers)).toBe(true)
+			expect(handlers.log).toHaveBeenCalledWith(
+				'warn',
+				'The lists have not loaded from AMPP after 30 s, so they are reported complete without them',
+			)
+		})
+
+		it('keeps the lists incomplete while the platform is unreachable', async () => {
+			login.mockRejectedValue(new Error('down'))
+			const handlers = makeHandlers()
+			const connection = new Connection(handlers)
+
+			connection.start('ampp.example.com', 'key')
+			await vi.advanceTimersByTimeAsync(5 * FIRST_LOAD_TIMEOUT_MS)
+
+			expect(login.mock.calls.length).toBeGreaterThan(2)
+			expect(handlers.loadComplete.mock.calls.every(([complete]) => complete === false)).toBe(true)
+		})
+
+		it('reports the lists incomplete once stopped, and never times out afterwards', async () => {
+			const handlers = makeHandlers()
+			handlers.load.mockImplementationOnce(async () => new Promise<void>(() => {}))
+			const connection = new Connection(handlers)
+			connection.start('ampp.example.com', 'key')
+			await flush()
+
+			await connection.stop()
+			await vi.advanceTimersByTimeAsync(2 * FIRST_LOAD_TIMEOUT_MS)
+
+			expect(loadComplete(handlers)).toBe(false)
+			expect(handlers.loadComplete).not.toHaveBeenCalledWith(true)
+		})
 	})
 
 	it("doesn't open the notification hub when stopped while logging in", async () => {

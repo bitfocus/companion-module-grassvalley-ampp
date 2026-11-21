@@ -33,3 +33,4 @@ Each source and destination has variables named by its AMPP id, e.g. `dest_<id>_
 - Apps: `app_<id>_name`, `_state`, `_error`, `_node`
 - App totals: `apps_total`, `apps_running`, `apps_error`, `apps_error_names`
 - Selection: `selected_destination`, `selected_destination_source`, `selected_source`, with `_id` variants
+- Loading: `first_load_complete` is false from connecting until the sources and destinations have been loaded from AMPP, and false again while the connection is down. If loading takes longer than 30 seconds, it is set to true anyway and a warning is logged.
